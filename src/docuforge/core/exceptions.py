@@ -19,3 +19,7 @@ class UnsupportedConversionError(DocuForgeError):
 
 class ConverterNotFoundError(DocuForgeError):
     """Raised when no converter is available for a conversion request."""
+
+
+class DuplicateConverterRegistrationError(DocuForgeError):
+    """Raised when a format pair already has a registered converter."""

@@ -5,6 +5,7 @@ import pytest
 from docuforge.core import (
     ConverterNotFoundError,
     DocuForgeError,
+    DuplicateConverterRegistrationError,
     InvalidConversionRequestError,
     InvalidFormatError,
     UnsupportedConversionError,
@@ -18,6 +19,7 @@ from docuforge.core import (
         InvalidConversionRequestError,
         UnsupportedConversionError,
         ConverterNotFoundError,
+        DuplicateConverterRegistrationError,
     ],
 )
 def test_core_exceptions_inherit_from_docuforge_error(
