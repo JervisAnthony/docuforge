@@ -11,11 +11,14 @@ from docuforge.core.exceptions import (
 )
 from docuforge.core.formats import DocumentFormat
 from docuforge.core.models import ConversionRequest
-from docuforge.core.registry import ConverterRegistry
+from docuforge.core.operations import ConversionOperation
+from docuforge.core.registry import ConverterKey, ConverterRegistry
 
 __all__ = [
+    "ConversionOperation",
     "ConversionRequest",
     "Converter",
+    "ConverterKey",
     "ConverterNotFoundError",
     "ConverterRegistry",
     "DocuForgeError",

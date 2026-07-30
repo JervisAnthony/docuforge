@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from docuforge.core import ConversionRequest, Converter, DocumentFormat
+from docuforge.core import ConversionOperation, ConversionRequest, Converter, DocumentFormat
 
 
 class TestConverter(Converter):
@@ -19,14 +19,26 @@ class TestConverter(Converter):
 
 def test_abstract_converter_cannot_be_instantiated() -> None:
     with pytest.raises(TypeError):
-        Converter(DocumentFormat.TXT, DocumentFormat.PDF)  # type: ignore[abstract]
+        Converter(  # type: ignore[abstract]
+            ConversionOperation.CONVERT,
+            DocumentFormat.TXT,
+            DocumentFormat.PDF,
+        )
 
 
 def test_converter_exposes_normalized_read_only_formats() -> None:
-    converter = TestConverter(" .TXT ", ".PDF")
+    converter = TestConverter(ConversionOperation.CONVERT, " .TXT ", ".PDF")
 
+    assert converter.operation is ConversionOperation.CONVERT
     assert converter.source_format is DocumentFormat.TXT
     assert converter.target_format is DocumentFormat.PDF
 
     with pytest.raises(AttributeError):
         converter.source_format = DocumentFormat.JPG  # type: ignore[misc]
+
+
+def test_converter_exposes_operation_as_read_only() -> None:
+    converter = TestConverter(ConversionOperation.CONVERT, DocumentFormat.TXT, DocumentFormat.PDF)
+
+    with pytest.raises(AttributeError):
+        converter.operation = ConversionOperation.MERGE  # type: ignore[misc]
