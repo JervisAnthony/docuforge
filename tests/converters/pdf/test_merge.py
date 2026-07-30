@@ -222,6 +222,45 @@ def test_merge_failure_preserves_existing_output(tmp_path: Path) -> None:
     assert page_widths(output) == [999]
 
 
+def test_replace_failure_preserves_output_and_removes_temporary_file(tmp_path: Path) -> None:
+    first = tmp_path / "first.pdf"
+    second = tmp_path / "second.pdf"
+    output = tmp_path / "output.pdf"
+    write_pdf(first, (100,))
+    write_pdf(second, (200,))
+    write_pdf(output, (999,))
+    replace_error = OSError("replace failed")
+
+    with (
+        patch("docuforge.converters.pdf.merge.os.replace", side_effect=replace_error),
+        pytest.raises(PdfProcessingError) as exc_info,
+    ):
+        PdfMergeConverter().convert(merge_request((first, second), output))
+
+    assert exc_info.value.__cause__ is replace_error
+    assert page_widths(output) == [999]
+    assert list(tmp_path.glob(f".{output.name}.*.tmp")) == []
+
+
+def test_writer_failure_leaves_no_output_or_temporary_file(tmp_path: Path) -> None:
+    first = tmp_path / "first.pdf"
+    second = tmp_path / "second.pdf"
+    output = tmp_path / "output.pdf"
+    write_pdf(first, (100,))
+    write_pdf(second, (200,))
+    write_error = OSError("write failed")
+
+    with (
+        patch("docuforge.converters.pdf.merge.PdfWriter.write", side_effect=write_error),
+        pytest.raises(PdfProcessingError) as exc_info,
+    ):
+        PdfMergeConverter().convert(merge_request((first, second), output))
+
+    assert exc_info.value.__cause__ is write_error
+    assert not output.exists()
+    assert list(tmp_path.glob(f".{output.name}.*.tmp")) == []
+
+
 def test_merge_translates_unreadable_input_error(tmp_path: Path) -> None:
     first = tmp_path / "first.pdf"
     second = tmp_path / "second.pdf"
