@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from docuforge.core import ConversionRequest, DocumentFormat, InvalidConversionRequestError
+from docuforge.core import (
+    ConversionOperation,
+    ConversionRequest,
+    DocumentFormat,
+    InvalidConversionRequestError,
+)
 
 
 def test_valid_conversion_request() -> None:
@@ -71,4 +76,38 @@ def test_conversion_request_rejects_identical_formats() -> None:
             output_path=Path("output.pdf"),
             source_format=DocumentFormat.PDF,
             target_format=DocumentFormat.PDF,
+        )
+
+
+def test_merge_request_allows_identical_formats() -> None:
+    request = ConversionRequest(
+        input_paths=(Path("first.pdf"), Path("second.pdf")),
+        output_path=Path("output.pdf"),
+        source_format=DocumentFormat.PDF,
+        target_format=DocumentFormat.PDF,
+        operation=ConversionOperation.MERGE,
+    )
+
+    assert request.operation is ConversionOperation.MERGE
+
+
+def test_merge_request_rejects_different_formats() -> None:
+    with pytest.raises(InvalidConversionRequestError):
+        ConversionRequest(
+            input_paths=(Path("input.txt"), Path("other.txt")),
+            output_path=Path("output.pdf"),
+            source_format=DocumentFormat.TXT,
+            target_format=DocumentFormat.PDF,
+            operation=ConversionOperation.MERGE,
+        )
+
+
+def test_conversion_request_rejects_unknown_operation() -> None:
+    with pytest.raises(InvalidConversionRequestError):
+        ConversionRequest(
+            input_paths=(Path("input.txt"),),
+            output_path=Path("output.pdf"),
+            source_format=DocumentFormat.TXT,
+            target_format=DocumentFormat.PDF,
+            operation="unknown",  # type: ignore[arg-type]
         )

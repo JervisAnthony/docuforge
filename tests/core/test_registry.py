@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from docuforge.core import (
+    ConversionOperation,
     ConversionRequest,
     Converter,
     ConverterNotFoundError,
@@ -37,17 +38,33 @@ def make_request(
 
 def test_register_and_lookup_converter() -> None:
     registry = ConverterRegistry()
-    converter = StubConverter(DocumentFormat.TXT, DocumentFormat.PDF)
+    converter = StubConverter(
+        ConversionOperation.CONVERT,
+        DocumentFormat.TXT,
+        DocumentFormat.PDF,
+    )
 
     registry.register(converter)
 
-    assert registry.get_converter(" .TXT ", ".pdf") is converter
+    assert (
+        registry.get_converter(ConversionOperation.CONVERT, " .TXT ", ".pdf") is converter
+    )
 
 
 def test_lookup_converter_by_conversion_request() -> None:
     registry = ConverterRegistry()
-    converter = StubConverter(DocumentFormat.TXT, DocumentFormat.PDF)
+    converter = StubConverter(
+        ConversionOperation.CONVERT,
+        DocumentFormat.TXT,
+        DocumentFormat.PDF,
+    )
+    other_operation = StubConverter(
+        ConversionOperation.MERGE,
+        DocumentFormat.TXT,
+        DocumentFormat.PDF,
+    )
     request = make_request()
+    registry.register(other_operation)
     registry.register(converter)
 
     assert registry.get_converter_for(request) is converter
@@ -57,15 +74,31 @@ def test_missing_converter_raises_converter_not_found_error() -> None:
     registry = ConverterRegistry()
 
     with pytest.raises(ConverterNotFoundError):
-        registry.get_converter(DocumentFormat.TXT, DocumentFormat.PDF)
+        registry.get_converter(
+            ConversionOperation.CONVERT,
+            DocumentFormat.TXT,
+            DocumentFormat.PDF,
+        )
 
 
 def test_duplicate_registration_is_rejected() -> None:
     registry = ConverterRegistry()
-    registry.register(StubConverter(DocumentFormat.TXT, DocumentFormat.PDF))
+    registry.register(
+        StubConverter(
+            ConversionOperation.CONVERT,
+            DocumentFormat.TXT,
+            DocumentFormat.PDF,
+        )
+    )
 
     with pytest.raises(DuplicateConverterRegistrationError):
-        registry.register(StubConverter(DocumentFormat.TXT, DocumentFormat.PDF))
+        registry.register(
+            StubConverter(
+                ConversionOperation.CONVERT,
+                DocumentFormat.TXT,
+                DocumentFormat.PDF,
+            )
+        )
 
 
 def test_invalid_registration_input_is_rejected() -> None:
@@ -75,21 +108,75 @@ def test_invalid_registration_input_is_rejected() -> None:
         registry.register(object())  # type: ignore[arg-type]
 
 
-def test_supported_pairs_preserve_registration_order() -> None:
+def test_supported_conversions_preserve_registration_order() -> None:
     registry = ConverterRegistry()
-    registry.register(StubConverter(DocumentFormat.TXT, DocumentFormat.PDF))
-    registry.register(StubConverter(DocumentFormat.PNG, DocumentFormat.JPG))
+    registry.register(
+        StubConverter(
+            ConversionOperation.CONVERT,
+            DocumentFormat.TXT,
+            DocumentFormat.PDF,
+        )
+    )
+    registry.register(
+        StubConverter(
+            ConversionOperation.CONVERT,
+            DocumentFormat.PNG,
+            DocumentFormat.JPG,
+        )
+    )
 
-    assert registry.supported_pairs() == (
-        (DocumentFormat.TXT, DocumentFormat.PDF),
-        (DocumentFormat.PNG, DocumentFormat.JPG),
+    assert registry.supported_conversions() == (
+        (ConversionOperation.CONVERT, DocumentFormat.TXT, DocumentFormat.PDF),
+        (ConversionOperation.CONVERT, DocumentFormat.PNG, DocumentFormat.JPG),
+    )
+
+
+def test_different_operations_for_the_same_format_pair_can_coexist() -> None:
+    registry = ConverterRegistry()
+    convert = StubConverter(
+        ConversionOperation.CONVERT,
+        DocumentFormat.TXT,
+        DocumentFormat.PDF,
+    )
+    merge = StubConverter(
+        ConversionOperation.MERGE,
+        DocumentFormat.TXT,
+        DocumentFormat.PDF,
+    )
+
+    registry.register(convert)
+    registry.register(merge)
+
+    assert (
+        registry.get_converter(
+            ConversionOperation.CONVERT,
+            DocumentFormat.TXT,
+            DocumentFormat.PDF,
+        )
+        is convert
+    )
+    assert (
+        registry.get_converter(
+            ConversionOperation.MERGE,
+            DocumentFormat.TXT,
+            DocumentFormat.PDF,
+        )
+        is merge
     )
 
 
 def test_registry_instances_do_not_share_state() -> None:
     first_registry = ConverterRegistry()
     second_registry = ConverterRegistry()
-    first_registry.register(StubConverter(DocumentFormat.TXT, DocumentFormat.PDF))
+    first_registry.register(
+        StubConverter(
+            ConversionOperation.CONVERT,
+            DocumentFormat.TXT,
+            DocumentFormat.PDF,
+        )
+    )
 
-    assert first_registry.supported_pairs() == ((DocumentFormat.TXT, DocumentFormat.PDF),)
-    assert second_registry.supported_pairs() == ()
+    assert first_registry.supported_conversions() == (
+        (ConversionOperation.CONVERT, DocumentFormat.TXT, DocumentFormat.PDF),
+    )
+    assert second_registry.supported_conversions() == ()

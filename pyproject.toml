@@ -25,7 +25,9 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
-dependencies = []
+dependencies = [
+    "pypdf>=6.0,<7",
+]
 
 
 [project.optional-dependencies]
