@@ -45,5 +45,12 @@ class ConversionRequest:
             raise InvalidConversionRequestError("Output path must differ from every input path.")
         if operation is ConversionOperation.CONVERT and source_format is target_format:
             raise InvalidConversionRequestError("Source and target formats must differ.")
-        if operation is ConversionOperation.MERGE and source_format is not target_format:
-            raise InvalidConversionRequestError("Merge requests require identical formats.")
+        if (
+            operation in {ConversionOperation.MERGE, ConversionOperation.SPLIT}
+            and source_format is not target_format
+        ):
+            raise InvalidConversionRequestError(
+                f"{operation.value.title()} requests require identical formats."
+            )
+        if operation is ConversionOperation.SPLIT and len(input_paths) != 1:
+            raise InvalidConversionRequestError("Split requests require exactly one input path.")

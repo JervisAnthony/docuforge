@@ -1,6 +1,6 @@
 """Public domain API for DocuForge."""
 
-from docuforge.core.converters import Converter
+from docuforge.core.converters import ConversionResult, Converter
 from docuforge.core.exceptions import (
     ConverterNotFoundError,
     DocuForgeError,
@@ -17,6 +17,7 @@ from docuforge.core.registry import ConverterKey, ConverterRegistry
 __all__ = [
     "ConversionOperation",
     "ConversionRequest",
+    "ConversionResult",
     "Converter",
     "ConverterKey",
     "ConverterNotFoundError",

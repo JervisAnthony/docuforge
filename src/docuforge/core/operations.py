@@ -8,3 +8,4 @@ class ConversionOperation(str, Enum):
 
     CONVERT = "convert"
     MERGE = "merge"
+    SPLIT = "split"

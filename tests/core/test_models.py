@@ -111,3 +111,37 @@ def test_conversion_request_rejects_unknown_operation() -> None:
             target_format=DocumentFormat.PDF,
             operation="unknown",  # type: ignore[arg-type]
         )
+
+
+def test_split_request_allows_one_input_with_identical_formats() -> None:
+    request = ConversionRequest(
+        input_paths=(Path("input.pdf"),),
+        output_path=Path("output.pdf"),
+        source_format=DocumentFormat.PDF,
+        target_format=DocumentFormat.PDF,
+        operation=ConversionOperation.SPLIT,
+    )
+
+    assert request.operation is ConversionOperation.SPLIT
+
+
+def test_split_request_rejects_multiple_inputs() -> None:
+    with pytest.raises(InvalidConversionRequestError):
+        ConversionRequest(
+            input_paths=(Path("first.pdf"), Path("second.pdf")),
+            output_path=Path("output.pdf"),
+            source_format=DocumentFormat.PDF,
+            target_format=DocumentFormat.PDF,
+            operation=ConversionOperation.SPLIT,
+        )
+
+
+def test_split_request_rejects_different_formats() -> None:
+    with pytest.raises(InvalidConversionRequestError):
+        ConversionRequest(
+            input_paths=(Path("input.txt"),),
+            output_path=Path("output.pdf"),
+            source_format=DocumentFormat.TXT,
+            target_format=DocumentFormat.PDF,
+            operation=ConversionOperation.SPLIT,
+        )
