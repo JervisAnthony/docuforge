@@ -1,6 +1,8 @@
 """Tests for PDF split conversion."""
 
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from pypdf import PdfReader, PdfWriter
@@ -253,6 +255,100 @@ def test_split_rejects_encrypted_pdf(tmp_path: Path) -> None:
         PdfSplitConverter().convert(split_request(input_path, (output,), ((0,),)))
 
     assert not output.exists()
+
+
+def test_writer_failure_leaves_no_outputs_or_temporary_files(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.pdf"
+    first_output = tmp_path / "first.pdf"
+    second_output = tmp_path / "second.pdf"
+    write_pdf(input_path, (100, 200))
+    write_error = OSError("second output write failed")
+    real_write = PdfWriter.write
+    write_count = 0
+
+    def fail_second_write(writer: PdfWriter, stream: object) -> object:
+        nonlocal write_count
+        write_count += 1
+        if write_count == 2:
+            raise write_error
+        return real_write(writer, stream)  # type: ignore[arg-type]
+
+    with (
+        patch.object(PdfWriter, "write", autospec=True, side_effect=fail_second_write),
+        pytest.raises(PdfProcessingError) as exc_info,
+    ):
+        PdfSplitConverter().convert(
+            split_request(input_path, (first_output, second_output), ((0,), (1,)))
+        )
+
+    assert exc_info.value.__cause__ is write_error
+    assert not first_output.exists()
+    assert not second_output.exists()
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_first_replace_failure_preserves_all_existing_outputs(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.pdf"
+    first_output = tmp_path / "first.pdf"
+    second_output = tmp_path / "second.pdf"
+    write_pdf(input_path, (100, 200))
+    write_pdf(first_output, (999,))
+    write_pdf(second_output, (998,))
+    replace_error = OSError("first output replace failed")
+
+    with (
+        patch("docuforge.converters.pdf.split.os.replace", side_effect=replace_error),
+        pytest.raises(PdfProcessingError) as exc_info,
+    ):
+        PdfSplitConverter().convert(
+            split_request(input_path, (first_output, second_output), ((0,), (1,)))
+        )
+
+    assert exc_info.value.__cause__ is replace_error
+    assert page_widths(first_output) == [999]
+    assert page_widths(second_output) == [998]
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_later_replace_failure_keeps_prior_update_and_preserves_remaining_outputs(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "input.pdf"
+    first_output = tmp_path / "first.pdf"
+    second_output = tmp_path / "second.pdf"
+    third_output = tmp_path / "third.pdf"
+    write_pdf(input_path, (100, 200, 300))
+    write_pdf(first_output, (999,))
+    write_pdf(second_output, (998,))
+    write_pdf(third_output, (997,))
+    replace_error = OSError("second output replace failed")
+    real_replace = os.replace
+    replace_count = 0
+
+    def fail_second_replace(source: Path, destination: Path) -> None:
+        nonlocal replace_count
+        replace_count += 1
+        if replace_count == 2:
+            raise replace_error
+        real_replace(source, destination)
+
+    with (
+        patch("docuforge.converters.pdf.split.os.replace", side_effect=fail_second_replace),
+        pytest.raises(PdfProcessingError) as exc_info,
+    ):
+        PdfSplitConverter().convert(
+            split_request(
+                input_path,
+                (first_output, second_output, third_output),
+                ((0,), (1,), (2,)),
+            )
+        )
+
+    assert exc_info.value.__cause__ is replace_error
+    assert page_widths(first_output) == [100]
+    assert page_widths(second_output) == [998]
+    assert page_widths(third_output) == [997]
+    assert list(tmp_path.glob(".*.tmp")) == []
 
 
 def test_registry_can_hold_merge_and_split_for_pdf_pair(tmp_path: Path) -> None:
