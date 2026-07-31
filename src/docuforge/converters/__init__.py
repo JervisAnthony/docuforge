@@ -1,5 +1,11 @@
 """Public converter implementations provided by DocuForge."""
 
+from docuforge.converters.image import (
+    ImageInput,
+    ImageProcessingError,
+    ImageToPdfConverter,
+    ImageToPdfRequest,
+)
 from docuforge.converters.pdf import (
     PageGroup,
     PdfMergeConverter,
@@ -9,6 +15,10 @@ from docuforge.converters.pdf import (
 )
 
 __all__ = [
+    "ImageInput",
+    "ImageProcessingError",
+    "ImageToPdfConverter",
+    "ImageToPdfRequest",
     "PageGroup",
     "PdfMergeConverter",
     "PdfProcessingError",
