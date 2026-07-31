@@ -1,5 +1,17 @@
 """Public converter implementations provided by DocuForge."""
 
-from docuforge.converters.pdf import PdfMergeConverter, PdfProcessingError
+from docuforge.converters.pdf import (
+    PageGroup,
+    PdfMergeConverter,
+    PdfProcessingError,
+    PdfSplitConverter,
+    PdfSplitRequest,
+)
 
-__all__ = ["PdfMergeConverter", "PdfProcessingError"]
+__all__ = [
+    "PageGroup",
+    "PdfMergeConverter",
+    "PdfProcessingError",
+    "PdfSplitConverter",
+    "PdfSplitRequest",
+]

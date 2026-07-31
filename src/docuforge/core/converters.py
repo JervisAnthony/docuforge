@@ -7,6 +7,8 @@ from docuforge.core.formats import DocumentFormat
 from docuforge.core.models import ConversionRequest
 from docuforge.core.operations import ConversionOperation
 
+ConversionResult = Path | tuple[Path, ...]
+
 
 class Converter(ABC):
     """Base interface implemented by document converters."""
@@ -38,6 +40,6 @@ class Converter(ABC):
         return self._target_format
 
     @abstractmethod
-    def convert(self, request: ConversionRequest) -> Path:
-        """Convert a validated request and return its output path."""
+    def convert(self, request: ConversionRequest) -> ConversionResult:
+        """Convert a validated request and return its output path or paths."""
         raise NotImplementedError
