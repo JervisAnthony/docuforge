@@ -12,6 +12,23 @@ from docuforge.core import (
 
 
 @dataclass(frozen=True, slots=True)
+class PdfSplitDirectoryRequest:
+    """A request to split every PDF page into a deterministic directory output."""
+
+    input_path: Path
+    output_directory: Path
+
+
+@dataclass(frozen=True, slots=True)
+class PdfSplitDirectoryResult:
+    """The ordered outputs produced by a directory-based PDF split."""
+
+    input_path: Path
+    output_directory: Path
+    output_paths: tuple[Path, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class PageGroup:
     """An ordered collection of zero-based pages for one split output."""
 

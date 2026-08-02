@@ -109,6 +109,41 @@ def test_split_multiple_groups_returns_outputs_in_request_order(tmp_path: Path) 
     assert page_widths(third_output) == [200]
 
 
+@pytest.mark.parametrize("suffix", [".pdf", ".PDF", ".Pdf"])
+def test_split_accepts_case_insensitive_input_extensions(
+    tmp_path: Path,
+    suffix: str,
+) -> None:
+    input_path = tmp_path / f"input{suffix}"
+    output = tmp_path / "output.pdf"
+    write_pdf(input_path, (100,))
+
+    PdfSplitConverter().convert(split_request(input_path, (output,), ((0,),)))
+
+    assert page_widths(output) == [100]
+
+
+@pytest.mark.parametrize("name", ["input.txt", "input", "input.pdf.tmp"])
+def test_split_rejects_invalid_input_extension_before_opening_pdf(
+    tmp_path: Path,
+    name: str,
+) -> None:
+    input_path = tmp_path / name
+    output = tmp_path / "output.pdf"
+
+    with (
+        patch.object(Path, "open") as open_mock,
+        pytest.raises(InvalidConversionRequestError) as exc_info,
+    ):
+        PdfSplitConverter().convert(split_request(input_path, (output,), ((0,),)))
+
+    assert str(exc_info.value) == (
+        f"Input file must use the .pdf extension: {input_path}"
+    )
+    open_mock.assert_not_called()
+    assert not output.exists()
+
+
 def test_split_replaces_existing_outputs_on_success(tmp_path: Path) -> None:
     input_path = tmp_path / "input.pdf"
     first_output = tmp_path / "first.pdf"

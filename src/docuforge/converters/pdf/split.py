@@ -39,7 +39,7 @@ class PdfSplitConverter(Converter):
         temporary_paths: list[Path] = []
         try:
             with request.input_paths[0].open("rb") as input_stream:
-                reader = PdfReader(input_stream)
+                reader = PdfReader(input_stream, strict=True)
                 if reader.is_encrypted:
                     raise PdfProcessingError(
                         f"Encrypted PDF requires a password: {request.input_paths[0]}."
@@ -102,6 +102,10 @@ class PdfSplitConverter(Converter):
             raise InvalidConversionRequestError("PDF splitting requires a PdfSplitRequest.")
 
         input_path = request.input_paths[0]
+        if input_path.suffix.lower() != ".pdf":
+            raise InvalidConversionRequestError(
+                f"Input file must use the .pdf extension: {input_path}"
+            )
         if not input_path.exists():
             raise InvalidConversionRequestError(f"Input file does not exist: {input_path}.")
         if not input_path.is_file():
