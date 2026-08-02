@@ -61,8 +61,27 @@ def build_parser() -> ArgumentParser:
     )
     merge_parser.set_defaults(command_handler="pdf_merge")
 
-    split_parser = pdf_commands.add_parser("split", help="Split a PDF document.")
-    split_parser.set_defaults(command_path="pdf split")
+    split_parser = pdf_commands.add_parser(
+        "split",
+        help="Split a PDF document.",
+        description="Split a PDF into one output file per page.",
+    )
+    split_parser.add_argument(
+        "input_path",
+        type=Path,
+        metavar="INPUT",
+        help="Input PDF path.",
+    )
+    split_parser.add_argument(
+        "-o",
+        "--output-dir",
+        dest="output_directory",
+        type=Path,
+        required=True,
+        metavar="OUTPUT_DIR",
+        help="Destination directory for split PDF files.",
+    )
+    split_parser.set_defaults(command_handler="pdf_split")
 
     image_parser = commands.add_parser("image", help="Work with image documents.")
     image_commands = image_parser.add_subparsers(dest="image_command", required=True)
