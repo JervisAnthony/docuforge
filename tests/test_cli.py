@@ -62,20 +62,13 @@ def test_invalid_command_returns_two(arguments, capsys) -> None:
     assert "error: argument" in captured.err
 
 
-@pytest.mark.parametrize(
-    ("arguments", "command_path"),
-    [
-        (["pdf", "split"], "pdf split"),
-        (["image", "to-pdf"], "image to-pdf"),
-    ],
-)
-def test_placeholder_command_returns_two_on_stderr(arguments, command_path, capsys) -> None:
-    assert main(arguments) == PLACEHOLDER_EXIT_CODE
+def test_image_placeholder_command_returns_two_on_stderr(capsys) -> None:
+    assert main(["image", "to-pdf"]) == PLACEHOLDER_EXIT_CODE
 
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == (
-        f"docuforge {command_path}: command execution will be added in a later commit\n"
+        "docuforge image to-pdf: command execution will be added in a later commit\n"
     )
 
 
