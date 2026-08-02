@@ -11,7 +11,10 @@ from docuforge.converters.pdf import (
     PdfMergeConverter,
     PdfProcessingError,
     PdfSplitConverter,
+    PdfSplitDirectoryRequest,
+    PdfSplitDirectoryResult,
     PdfSplitRequest,
+    split_pdf_to_directory,
 )
 
 __all__ = [
@@ -23,5 +26,8 @@ __all__ = [
     "PdfMergeConverter",
     "PdfProcessingError",
     "PdfSplitConverter",
+    "PdfSplitDirectoryRequest",
+    "PdfSplitDirectoryResult",
     "PdfSplitRequest",
+    "split_pdf_to_directory",
 ]
