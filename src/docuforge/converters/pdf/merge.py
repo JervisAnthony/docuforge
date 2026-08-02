@@ -39,7 +39,7 @@ class PdfMergeConverter(Converter):
         try:
             for input_path in request.input_paths:
                 with input_path.open("rb") as input_stream:
-                    reader = PdfReader(input_stream)
+                    reader = PdfReader(input_stream, strict=True)
                     if reader.is_encrypted:
                         raise PdfProcessingError(
                             f"Encrypted PDF requires a password: {input_path}."
@@ -84,6 +84,16 @@ class PdfMergeConverter(Converter):
             raise UnsupportedConversionError("PdfMergeConverter requires a PDF merge request.")
         if len(request.input_paths) < 2:
             raise InvalidConversionRequestError("PDF merge requires at least two input files.")
+
+        for input_path in request.input_paths:
+            if input_path.suffix.lower() != ".pdf":
+                raise InvalidConversionRequestError(
+                    f"Input file must use the .pdf extension: {input_path}"
+                )
+        if request.output_path.suffix.lower() != ".pdf":
+            raise InvalidConversionRequestError(
+                f"Output file must use the .pdf extension: {request.output_path}"
+            )
 
         resolved_inputs: set[Path] = set()
         for input_path in request.input_paths:
