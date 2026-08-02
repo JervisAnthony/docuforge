@@ -20,6 +20,45 @@ SUPPORTED_IMAGE_FORMATS = frozenset(
 )
 
 
+def _validate_path_request_fields(
+    input_paths: tuple[Path, ...],
+    output_path: Path,
+) -> None:
+    """Validate path-model structure without reconstructing caller values."""
+    if not isinstance(input_paths, tuple):
+        raise TypeError("input_paths must be a tuple of Path objects")
+    if not input_paths:
+        raise InvalidConversionRequestError("At least one input path is required.")
+    if any(not isinstance(input_path, Path) for input_path in input_paths):
+        raise TypeError("input_paths must contain only Path objects")
+    if not isinstance(output_path, Path):
+        raise TypeError("output_path must be a Path object")
+
+
+@dataclass(frozen=True, slots=True)
+class ImageToPdfPathRequest:
+    """An immutable request for suffix-inferred image-path conversion."""
+
+    input_paths: tuple[Path, ...]
+    output_path: Path
+
+    def __post_init__(self) -> None:
+        """Validate structure while preserving every caller-supplied object."""
+        _validate_path_request_fields(self.input_paths, self.output_path)
+
+
+@dataclass(frozen=True, slots=True)
+class ImageToPdfPathResult:
+    """The identity-preserving result of path-based image conversion."""
+
+    input_paths: tuple[Path, ...]
+    output_path: Path
+
+    def __post_init__(self) -> None:
+        """Validate structure while preserving every supplied object."""
+        _validate_path_request_fields(self.input_paths, self.output_path)
+
+
 @dataclass(frozen=True, slots=True)
 class ImageInput:
     """One ordered image input and its declared document format."""
