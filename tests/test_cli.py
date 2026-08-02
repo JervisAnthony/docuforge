@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from docuforge.__main__ import PLACEHOLDER_EXIT_CODE, main
+from docuforge.__main__ import main
+from docuforge.cli.dispatch import PLACEHOLDER_EXIT_CODE
 from docuforge.cli.parser import package_version
 
 
@@ -64,7 +65,6 @@ def test_invalid_command_returns_two(arguments, capsys) -> None:
 @pytest.mark.parametrize(
     ("arguments", "command_path"),
     [
-        (["pdf", "merge"], "pdf merge"),
         (["pdf", "split"], "pdf split"),
         (["image", "to-pdf"], "image to-pdf"),
     ],

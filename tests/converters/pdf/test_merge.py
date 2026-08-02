@@ -90,6 +90,86 @@ def test_merge_three_pdfs_preserves_all_page_order(tmp_path: Path) -> None:
     assert page_widths(output) == [100, 110, 200, 300, 310]
 
 
+@pytest.mark.parametrize("suffix", [".pdf", ".PDF", ".Pdf"])
+def test_merge_accepts_case_insensitive_input_extensions(tmp_path: Path, suffix: str) -> None:
+    first = tmp_path / f"first{suffix}"
+    second = tmp_path / "second.pdf"
+    output = tmp_path / "output.pdf"
+    write_pdf(first, (100,))
+    write_pdf(second, (200,))
+
+    PdfMergeConverter().convert(merge_request((first, second), output))
+
+    assert page_widths(output) == [100, 200]
+
+
+@pytest.mark.parametrize("suffix", [".pdf", ".PDF", ".Pdf"])
+def test_merge_accepts_case_insensitive_output_extensions(tmp_path: Path, suffix: str) -> None:
+    first = tmp_path / "first.pdf"
+    second = tmp_path / "second.pdf"
+    output = tmp_path / f"output{suffix}"
+    write_pdf(first, (100,))
+    write_pdf(second, (200,))
+
+    PdfMergeConverter().convert(merge_request((first, second), output))
+
+    assert page_widths(output) == [100, 200]
+
+
+@pytest.mark.parametrize("name", ["notes.txt", "image.png", "document"])
+def test_merge_rejects_invalid_input_extension_before_opening_pdfs(
+    tmp_path: Path,
+    name: str,
+) -> None:
+    invalid = tmp_path / name
+    second = tmp_path / "second.pdf"
+    output = tmp_path / "output.pdf"
+
+    with (
+        patch.object(Path, "open") as open_mock,
+        pytest.raises(InvalidConversionRequestError) as exc_info,
+    ):
+        PdfMergeConverter().convert(merge_request((invalid, second), output))
+
+    assert str(exc_info.value) == f"Input file must use the .pdf extension: {invalid}"
+    open_mock.assert_not_called()
+    assert not output.exists()
+
+
+def test_merge_reports_first_invalid_input_in_request_order(tmp_path: Path) -> None:
+    first_invalid = tmp_path / "first.txt"
+    second_invalid = tmp_path / "second.png"
+
+    with pytest.raises(InvalidConversionRequestError) as exc_info:
+        PdfMergeConverter().convert(
+            merge_request((first_invalid, second_invalid), tmp_path / "output.pdf")
+        )
+
+    assert str(exc_info.value) == (
+        f"Input file must use the .pdf extension: {first_invalid}"
+    )
+
+
+@pytest.mark.parametrize("name", ["output.txt", "output", "output.pdf.tmp"])
+def test_merge_rejects_invalid_output_extension_before_opening_pdfs(
+    tmp_path: Path,
+    name: str,
+) -> None:
+    first = tmp_path / "first.pdf"
+    second = tmp_path / "second.pdf"
+    output = tmp_path / name
+
+    with (
+        patch.object(Path, "open") as open_mock,
+        pytest.raises(InvalidConversionRequestError) as exc_info,
+    ):
+        PdfMergeConverter().convert(merge_request((first, second), output))
+
+    assert str(exc_info.value) == f"Output file must use the .pdf extension: {output}"
+    open_mock.assert_not_called()
+    assert not output.exists()
+
+
 def test_merge_replaces_existing_non_input_output(tmp_path: Path) -> None:
     first = tmp_path / "first.pdf"
     second = tmp_path / "second.pdf"

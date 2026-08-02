@@ -2,6 +2,7 @@
 
 from argparse import ArgumentParser
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
 DEVELOPMENT_VERSION = "0.1.0.dev0"
 
@@ -31,8 +32,34 @@ def build_parser() -> ArgumentParser:
     pdf_parser = commands.add_parser("pdf", help="Work with PDF documents.")
     pdf_commands = pdf_parser.add_subparsers(dest="pdf_command", required=True)
 
-    merge_parser = pdf_commands.add_parser("merge", help="Merge PDF documents.")
-    merge_parser.set_defaults(command_path="pdf merge")
+    merge_parser = pdf_commands.add_parser(
+        "merge",
+        help="Merge PDF documents.",
+        description="Merge two or more PDF documents in input order.",
+    )
+    merge_parser.add_argument(
+        "first_input",
+        type=Path,
+        metavar="INPUT",
+        help="First input PDF path.",
+    )
+    merge_parser.add_argument(
+        "input_paths",
+        type=Path,
+        nargs="+",
+        metavar="INPUT",
+        help="Second and additional input PDF paths.",
+    )
+    merge_parser.add_argument(
+        "-o",
+        "--output",
+        dest="output_path",
+        type=Path,
+        required=True,
+        metavar="OUTPUT",
+        help="Destination PDF path.",
+    )
+    merge_parser.set_defaults(command_handler="pdf_merge")
 
     split_parser = pdf_commands.add_parser("split", help="Split a PDF document.")
     split_parser.set_defaults(command_path="pdf split")
