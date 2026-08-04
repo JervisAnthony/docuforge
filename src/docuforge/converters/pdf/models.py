@@ -12,6 +12,84 @@ from docuforge.core import (
 
 
 @dataclass(frozen=True, slots=True)
+class PageRotation:
+    """One clockwise rotation for a zero-based PDF page index."""
+
+    page_index: int
+    degrees: int
+
+    def __post_init__(self) -> None:
+        """Validate the page index and supported clockwise rotation."""
+        if not isinstance(self.page_index, int) or isinstance(self.page_index, bool):
+            raise TypeError("page_index must be an integer")
+        if self.page_index < 0:
+            raise InvalidConversionRequestError("page_index must be non-negative")
+        if not isinstance(self.degrees, int) or isinstance(self.degrees, bool):
+            raise TypeError("degrees must be an integer")
+        if self.degrees not in {90, 180, 270}:
+            raise InvalidConversionRequestError(
+                "degrees must be one of 90, 180, or 270"
+            )
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class PdfRotateRequest(ConversionRequest):
+    """An immutable request to rotate selected pages in one PDF."""
+
+    output_paths: tuple[Path, ...]
+    rotations: tuple[PageRotation, ...]
+
+    def __init__(
+        self,
+        input_paths: tuple[Path, ...],
+        output_paths: tuple[Path, ...],
+        rotations: tuple[PageRotation, ...],
+    ) -> None:
+        """Validate structure while preserving every supplied object."""
+        if not isinstance(input_paths, tuple):
+            raise TypeError("input_paths must be a tuple of Path objects")
+        if len(input_paths) != 1:
+            raise InvalidConversionRequestError(
+                "PDF rotation requires exactly one input path."
+            )
+        if any(not isinstance(path, Path) for path in input_paths):
+            raise TypeError("input_paths must contain only Path objects")
+        if not isinstance(output_paths, tuple):
+            raise TypeError("output_paths must be a tuple of Path objects")
+        if len(output_paths) != 1:
+            raise InvalidConversionRequestError(
+                "PDF rotation requires exactly one output path."
+            )
+        if any(not isinstance(path, Path) for path in output_paths):
+            raise TypeError("output_paths must contain only Path objects")
+        if not isinstance(rotations, tuple):
+            raise TypeError("rotations must be a tuple of PageRotation objects")
+        if not rotations:
+            raise InvalidConversionRequestError(
+                "At least one page rotation is required."
+            )
+        if any(not isinstance(rotation, PageRotation) for rotation in rotations):
+            raise TypeError("rotations must contain only PageRotation objects")
+
+        seen_page_indices: set[int] = set()
+        for rotation in rotations:
+            if rotation.page_index in seen_page_indices:
+                raise InvalidConversionRequestError(
+                    "Each page may have only one rotation instruction: "
+                    f"{rotation.page_index}"
+                )
+            seen_page_indices.add(rotation.page_index)
+
+        object.__setattr__(self, "input_paths", input_paths)
+        object.__setattr__(self, "output_path", output_paths[0])
+        object.__setattr__(self, "source_format", DocumentFormat.PDF)
+        object.__setattr__(self, "target_format", DocumentFormat.PDF)
+        object.__setattr__(self, "operation", ConversionOperation.SPLIT)
+        object.__setattr__(self, "output_paths", output_paths)
+        object.__setattr__(self, "rotations", rotations)
+
+
+@dataclass(frozen=True, slots=True)
 class PdfSplitDirectoryRequest:
     """A request to split every PDF page into a deterministic directory output."""
 
