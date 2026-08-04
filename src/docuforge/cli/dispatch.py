@@ -1,12 +1,10 @@
 """Dispatch parsed command-line arguments to command implementations."""
 
-import sys
 from argparse import Namespace
 
+from docuforge.cli.commands.image_to_pdf import run_image_to_pdf
 from docuforge.cli.commands.pdf_merge import run_pdf_merge
 from docuforge.cli.commands.pdf_split import run_pdf_split
-
-PLACEHOLDER_EXIT_CODE = 2
 
 
 def dispatch(arguments: Namespace) -> int:
@@ -17,10 +15,7 @@ def dispatch(arguments: Namespace) -> int:
         return run_pdf_merge(input_paths, arguments.output_path)
     if command_handler == "pdf_split":
         return run_pdf_split(arguments.input_path, arguments.output_directory)
+    if command_handler == "image_to_pdf":
+        return run_image_to_pdf(arguments.input_paths, arguments.output_path)
 
-    command_path = arguments.command_path
-    print(
-        f"docuforge {command_path}: command execution will be added in a later commit",
-        file=sys.stderr,
-    )
-    return PLACEHOLDER_EXIT_CODE
+    raise ValueError("parsed arguments do not identify a command handler")
