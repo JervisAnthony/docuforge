@@ -5,12 +5,15 @@ from docuforge.converters.pdf.merge import PdfMergeConverter
 from docuforge.converters.pdf.models import (
     PageGroup,
     PageRotation,
+    PdfRotatePathRequest,
+    PdfRotatePathResult,
     PdfRotateRequest,
     PdfSplitDirectoryRequest,
     PdfSplitDirectoryResult,
     PdfSplitRequest,
 )
 from docuforge.converters.pdf.rotate import PdfRotateConverter
+from docuforge.converters.pdf.rotate_path import rotate_pdf_pages
 from docuforge.converters.pdf.split import PdfSplitConverter
 from docuforge.converters.pdf.split_directory import split_pdf_to_directory
 
@@ -20,10 +23,13 @@ __all__ = [
     "PdfMergeConverter",
     "PdfProcessingError",
     "PdfRotateConverter",
+    "PdfRotatePathRequest",
+    "PdfRotatePathResult",
     "PdfRotateRequest",
     "PdfSplitConverter",
     "PdfSplitDirectoryRequest",
     "PdfSplitDirectoryResult",
     "PdfSplitRequest",
+    "rotate_pdf_pages",
     "split_pdf_to_directory",
 ]
