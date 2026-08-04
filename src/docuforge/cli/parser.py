@@ -1,10 +1,55 @@
 """Argument parser construction for the DocuForge command-line interface."""
 
-from argparse import ArgumentParser
+import re
+from argparse import Action, ArgumentError, ArgumentParser, ArgumentTypeError, Namespace
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+from docuforge.converters import PageRotation
+
 DEVELOPMENT_VERSION = "0.1.0.dev0"
+ROTATION_SYNTAX_ERROR = (
+    "rotation must use PAGE:DEGREES with PAGE >= 1 and DEGREES one of "
+    "90, 180, or 270"
+)
+
+
+def parse_page_rotation(value: str) -> PageRotation:
+    """Parse one one-based CLI rotation into a zero-based instruction."""
+    if not isinstance(value, str) or re.fullmatch(r"[0-9]+:[0-9]+", value) is None:
+        raise ArgumentTypeError(ROTATION_SYNTAX_ERROR)
+
+    page_text, degrees_text = value.split(":")
+    page_number = int(page_text)
+    degrees = int(degrees_text)
+    if page_number < 1 or degrees not in {90, 180, 270}:
+        raise ArgumentTypeError(ROTATION_SYNTAX_ERROR)
+
+    return PageRotation(page_index=page_number - 1, degrees=degrees)
+
+
+class _AppendUniquePageRotation(Action):
+    """Append rotations in CLI order while rejecting repeated pages."""
+
+    def __call__(
+        self,
+        parser: ArgumentParser,
+        namespace: Namespace,
+        values: PageRotation,
+        option_string: str | None = None,
+    ) -> None:
+        rotations = getattr(namespace, self.dest, None)
+        if rotations is not None and any(
+            rotation.page_index == values.page_index for rotation in rotations
+        ):
+            raise ArgumentError(
+                self,
+                f"each page may be rotated only once: {values.page_index + 1}",
+            )
+
+        ordered_rotations = [] if rotations is None else [*rotations]
+        ordered_rotations.append(values)
+        setattr(namespace, self.dest, ordered_rotations)
 
 
 def package_version() -> str:
@@ -82,6 +127,43 @@ def build_parser() -> ArgumentParser:
         help="Destination directory for split PDF files.",
     )
     split_parser.set_defaults(command_handler="pdf_split")
+
+    rotate_parser = pdf_commands.add_parser(
+        "rotate",
+        help="Rotate selected PDF pages.",
+        description=(
+            "Rotate selected pages using one-based page numbers and clockwise "
+            "degrees 90, 180, or 270. Repeat --rotate for additional pages."
+        ),
+    )
+    rotate_parser.add_argument(
+        "input_path",
+        type=Path,
+        metavar="INPUT",
+        help="Input PDF path.",
+    )
+    rotate_parser.add_argument(
+        "-o",
+        "--output",
+        dest="output_path",
+        type=Path,
+        required=True,
+        metavar="OUTPUT",
+        help="Destination PDF path.",
+    )
+    rotate_parser.add_argument(
+        "--rotate",
+        dest="rotations",
+        type=parse_page_rotation,
+        action=_AppendUniquePageRotation,
+        required=True,
+        metavar="PAGE:DEGREES",
+        help=(
+            "Rotate one one-based PAGE clockwise by 90, 180, or 270 degrees; "
+            "repeat for additional pages."
+        ),
+    )
+    rotate_parser.set_defaults(command_handler="pdf_rotate")
 
     image_parser = commands.add_parser("image", help="Work with image documents.")
     image_commands = image_parser.add_subparsers(dest="image_command", required=True)
