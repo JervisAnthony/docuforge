@@ -89,6 +89,69 @@ class PdfRotateRequest(ConversionRequest):
         object.__setattr__(self, "rotations", rotations)
 
 
+def _validate_rotate_path_fields(
+    input_path: Path,
+    output_path: Path,
+    rotations: tuple[PageRotation, ...],
+) -> None:
+    """Validate high-level rotation model structure without rebuilding values."""
+    if not isinstance(input_path, Path):
+        raise TypeError("input_path must be a Path object")
+    if not isinstance(output_path, Path):
+        raise TypeError("output_path must be a Path object")
+    if not isinstance(rotations, tuple):
+        raise TypeError("rotations must be a tuple of PageRotation objects")
+    if not rotations:
+        raise InvalidConversionRequestError(
+            "At least one rotation instruction is required."
+        )
+    if any(not isinstance(rotation, PageRotation) for rotation in rotations):
+        raise TypeError("rotations must contain only PageRotation objects")
+
+    seen_page_indices: set[int] = set()
+    for rotation in rotations:
+        if rotation.page_index in seen_page_indices:
+            raise InvalidConversionRequestError(
+                "Each page may have only one rotation instruction: "
+                f"{rotation.page_index}"
+            )
+        seen_page_indices.add(rotation.page_index)
+
+
+@dataclass(frozen=True, slots=True)
+class PdfRotatePathRequest:
+    """An immutable high-level request for rotating selected PDF pages."""
+
+    input_path: Path
+    output_path: Path
+    rotations: tuple[PageRotation, ...]
+
+    def __post_init__(self) -> None:
+        """Validate structure while preserving all caller-supplied objects."""
+        _validate_rotate_path_fields(
+            self.input_path,
+            self.output_path,
+            self.rotations,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PdfRotatePathResult:
+    """The identity-preserving result of high-level PDF page rotation."""
+
+    input_path: Path
+    output_path: Path
+    rotations: tuple[PageRotation, ...]
+
+    def __post_init__(self) -> None:
+        """Validate structure while preserving all supplied objects."""
+        _validate_rotate_path_fields(
+            self.input_path,
+            self.output_path,
+            self.rotations,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class PdfSplitDirectoryRequest:
     """A request to split every PDF page into a deterministic directory output."""
