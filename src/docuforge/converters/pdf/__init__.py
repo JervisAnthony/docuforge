@@ -5,6 +5,8 @@ from docuforge.converters.pdf.merge import PdfMergeConverter
 from docuforge.converters.pdf.models import (
     PageGroup,
     PageRotation,
+    PdfRemovePagesPathRequest,
+    PdfRemovePagesPathResult,
     PdfRemovePagesRequest,
     PdfRotatePathRequest,
     PdfRotatePathResult,
@@ -14,6 +16,7 @@ from docuforge.converters.pdf.models import (
     PdfSplitRequest,
 )
 from docuforge.converters.pdf.remove_pages import PdfRemovePagesConverter
+from docuforge.converters.pdf.remove_pages_path import remove_pdf_pages
 from docuforge.converters.pdf.rotate import PdfRotateConverter
 from docuforge.converters.pdf.rotate_path import rotate_pdf_pages
 from docuforge.converters.pdf.split import PdfSplitConverter
@@ -25,6 +28,8 @@ __all__ = [
     "PdfMergeConverter",
     "PdfProcessingError",
     "PdfRemovePagesConverter",
+    "PdfRemovePagesPathRequest",
+    "PdfRemovePagesPathResult",
     "PdfRemovePagesRequest",
     "PdfRotateConverter",
     "PdfRotatePathRequest",
@@ -34,6 +39,7 @@ __all__ = [
     "PdfSplitDirectoryRequest",
     "PdfSplitDirectoryResult",
     "PdfSplitRequest",
+    "remove_pdf_pages",
     "rotate_pdf_pages",
     "split_pdf_to_directory",
 ]

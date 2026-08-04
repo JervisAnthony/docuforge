@@ -15,6 +15,8 @@ from docuforge.converters.pdf import (
     PdfMergeConverter,
     PdfProcessingError,
     PdfRemovePagesConverter,
+    PdfRemovePagesPathRequest,
+    PdfRemovePagesPathResult,
     PdfRemovePagesRequest,
     PdfRotateConverter,
     PdfRotatePathRequest,
@@ -24,6 +26,7 @@ from docuforge.converters.pdf import (
     PdfSplitDirectoryRequest,
     PdfSplitDirectoryResult,
     PdfSplitRequest,
+    remove_pdf_pages,
     rotate_pdf_pages,
     split_pdf_to_directory,
 )
@@ -40,6 +43,8 @@ __all__ = [
     "PdfMergeConverter",
     "PdfProcessingError",
     "PdfRemovePagesConverter",
+    "PdfRemovePagesPathRequest",
+    "PdfRemovePagesPathResult",
     "PdfRemovePagesRequest",
     "PdfRotateConverter",
     "PdfRotatePathRequest",
@@ -50,6 +55,7 @@ __all__ = [
     "PdfSplitDirectoryResult",
     "PdfSplitRequest",
     "convert_images_to_pdf",
+    "remove_pdf_pages",
     "rotate_pdf_pages",
     "split_pdf_to_directory",
 ]
