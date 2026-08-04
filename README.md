@@ -42,6 +42,17 @@ The `-o` and `--output` options select the destination PDF. Supported inputs are
 JPG, JPEG, PNG, BMP, TIF, and TIFF files, and their command-line order determines
 the PDF page order. The output filename must use the `.pdf` extension.
 
+Rotate selected PDF pages with one-based page numbers:
+
+```bash
+docuforge pdf rotate source.pdf --output rotated.pdf --rotate 1:90 --rotate 3:270
+```
+
+The repeatable `--rotate` option supports clockwise rotations of 90, 180, and
+270 degrees. Selected pages rotate while every page remains in source order. The
+output must use the `.pdf` extension, and missing output directories are not
+created.
+
 ## Development
 
 ```bash

@@ -18,6 +18,7 @@ from docuforge.cli.parser import package_version
         (["image", "--help"], "usage: docuforge image"),
         (["pdf", "merge", "--help"], "usage: docuforge pdf merge"),
         (["pdf", "split", "--help"], "usage: docuforge pdf split"),
+        (["pdf", "rotate", "--help"], "usage: docuforge pdf rotate"),
         (["image", "to-pdf", "--help"], "usage: docuforge image to-pdf"),
     ],
 )
