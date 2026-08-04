@@ -29,6 +29,19 @@ Expected output:
 DocuForge development build
 ```
 
+## Command-line usage
+
+PDF merge, PDF split, and image-to-PDF commands perform real conversion. Combine
+one or more ordered image files into a PDF with:
+
+```bash
+docuforge image to-pdf cover.jpg diagram.png --output document.pdf
+```
+
+The `-o` and `--output` options select the destination PDF. Supported inputs are
+JPG, JPEG, PNG, BMP, TIF, and TIFF files, and their command-line order determines
+the PDF page order. The output filename must use the `.pdf` extension.
+
 ## Development
 
 ```bash

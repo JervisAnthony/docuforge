@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from docuforge.__main__ import main
-from docuforge.cli.dispatch import PLACEHOLDER_EXIT_CODE
 from docuforge.cli.parser import package_version
 
 
@@ -60,16 +59,6 @@ def test_invalid_command_returns_two(arguments, capsys) -> None:
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "error: argument" in captured.err
-
-
-def test_image_placeholder_command_returns_two_on_stderr(capsys) -> None:
-    assert main(["image", "to-pdf"]) == PLACEHOLDER_EXIT_CODE
-
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == (
-        "docuforge image to-pdf: command execution will be added in a later commit\n"
-    )
 
 
 def test_python_module_entry_point_help() -> None:

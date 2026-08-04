@@ -89,7 +89,24 @@ def build_parser() -> ArgumentParser:
     to_pdf_parser = image_commands.add_parser(
         "to-pdf",
         help="Combine images into a PDF document.",
+        description="Combine one or more ordered image files into a PDF document.",
     )
-    to_pdf_parser.set_defaults(command_path="image to-pdf")
+    to_pdf_parser.add_argument(
+        "input_paths",
+        type=Path,
+        nargs="+",
+        metavar="INPUT",
+        help="Input image paths in PDF page order.",
+    )
+    to_pdf_parser.add_argument(
+        "-o",
+        "--output",
+        dest="output_path",
+        type=Path,
+        required=True,
+        metavar="OUTPUT",
+        help="Destination PDF path.",
+    )
+    to_pdf_parser.set_defaults(command_handler="image_to_pdf")
 
     return parser
