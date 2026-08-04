@@ -11,8 +11,11 @@ from docuforge.converters.image import (
 )
 from docuforge.converters.pdf import (
     PageGroup,
+    PageRotation,
     PdfMergeConverter,
     PdfProcessingError,
+    PdfRotateConverter,
+    PdfRotateRequest,
     PdfSplitConverter,
     PdfSplitDirectoryRequest,
     PdfSplitDirectoryResult,
@@ -28,8 +31,11 @@ __all__ = [
     "ImageToPdfPathResult",
     "ImageToPdfRequest",
     "PageGroup",
+    "PageRotation",
     "PdfMergeConverter",
     "PdfProcessingError",
+    "PdfRotateConverter",
+    "PdfRotateRequest",
     "PdfSplitConverter",
     "PdfSplitDirectoryRequest",
     "PdfSplitDirectoryResult",
