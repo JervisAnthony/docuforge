@@ -1,92 +1,282 @@
 # DocuForge
 
-DocuForge is a consumer-focused document conversion toolkit designed to make common document operations fast, private, and reliable.
+DocuForge is a Python document-processing toolkit with a command-line interface
+and public conversion APIs for focused PDF page operations and image-to-PDF
+workflows.
 
-## Vision
+## Status
 
-Build a modular platform for converting, merging, splitting, and optimizing documents across PDF, image, and office formats.
+DocuForge is under active development and currently uses a pre-alpha development
+version. The implemented CLI and Python APIs are functional and covered by unit,
+regression, and real-file end-to-end tests. The project is suitable for technical
+demos and early testing, but behavior may evolve before a stable release.
 
-## Planned interfaces
+## Requirements
 
-- Command-line interface
-- REST API
-- Web application
-- Desktop application
+- Python 3.11 or newer
+- A local checkout of this repository; DocuForge is not documented here as a
+  published PyPI package
 
-## Project status
+Runtime dependencies are installed from `pyproject.toml` during installation.
 
-DocuForge is in active development. The first milestone establishes the repository architecture, engineering standards, and product roadmap.
+## Installation
 
-## Quick start
+From the repository root, create a virtual environment and install the project in
+editable mode:
 
 ```bash
-python -m docuforge
+python -m venv .venv
 ```
 
-Expected output:
+Activate it on Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Or activate it on macOS/Linux:
+
+```bash
+source .venv/bin/activate
+```
+
+Then install and verify the CLI:
+
+```bash
+python -m pip install -e .
+docuforge --help
+```
+
+## Quick Start
+
+Merge two PDFs in input order:
+
+```bash
+docuforge pdf merge first.pdf second.pdf -o combined.pdf
+```
+
+Rotate page 2 clockwise by 90 degrees:
+
+```bash
+docuforge pdf rotate combined.pdf -o rotated.pdf --rotate 2:90
+```
+
+Combine images into a PDF in command-line order:
+
+```bash
+docuforge image to-pdf cover.jpg diagram.png -o document.pdf
+```
+
+Run `docuforge pdf --help`, `docuforge image --help`, or a leaf command such as
+`docuforge pdf merge --help` for more detail.
+
+## CLI Overview
+
+| Category | Command | Purpose |
+| --- | --- | --- |
+| PDF | `docuforge pdf merge` | Combine two or more PDFs in input order |
+| PDF | `docuforge pdf split` | Write one PDF per source page |
+| PDF | `docuforge pdf rotate` | Rotate selected pages clockwise |
+| PDF | `docuforge pdf remove-pages` | Remove selected pages |
+| PDF | `docuforge pdf extract-pages` | Copy selected pages into a new PDF |
+| Image | `docuforge image to-pdf` | Combine ordered images into a PDF |
+
+All commands write a new destination. Existing destination files may be replaced
+when the operation succeeds; source files are not modified.
+
+## PDF Commands
+
+### Merge
 
 ```text
-DocuForge development build
+docuforge pdf merge INPUT INPUT [INPUT ...] -o OUTPUT
 ```
 
-## Command-line usage
-
-PDF merge, PDF split, and image-to-PDF commands perform real conversion. Combine
-one or more ordered image files into a PDF with:
+Merge requires at least two input PDFs. Files are processed in command-line order,
+and pages retain their order within each source file. `-o` and `--output` select
+the destination.
 
 ```bash
-docuforge image to-pdf cover.jpg diagram.png --output document.pdf
+docuforge pdf merge chapter-1.pdf chapter-2.pdf appendix.pdf -o book.pdf
 ```
 
-The `-o` and `--output` options select the destination PDF. Supported inputs are
-JPG, JPEG, PNG, BMP, TIF, and TIFF files, and their command-line order determines
-the PDF page order. The output filename must use the `.pdf` extension.
+### Split
 
-Rotate selected PDF pages with one-based page numbers:
+```text
+docuforge pdf split INPUT -o OUTPUT_DIR
+```
+
+`-o` and `--output-dir` select the destination directory, which is created when
+needed. A source named `report.pdf` produces ordered files such as
+`report-page-0001.pdf`, `report-page-0002.pdf`, and so on.
 
 ```bash
-docuforge pdf rotate source.pdf --output rotated.pdf --rotate 1:90 --rotate 3:270
+docuforge pdf split report.pdf --output-dir report-pages
 ```
 
-The repeatable `--rotate` option supports clockwise rotations of 90, 180, and
-270 degrees. Selected pages rotate while every page remains in source order. The
-output must use the `.pdf` extension, and missing output directories are not
-created.
+### Rotate
+
+```text
+docuforge pdf rotate INPUT -o OUTPUT --rotate PAGE:DEGREES [--rotate PAGE:DEGREES ...]
+```
+
+`PAGE` is one-based. `DEGREES` must be `90`, `180`, or `270` and represents a
+clockwise rotation. Repeat `--rotate` to rotate more than one page. Each page may
+be specified only once, and page order in the document does not change.
+
+```bash
+docuforge pdf rotate source.pdf -o rotated.pdf --rotate 1:90 --rotate 3:270
+```
+
+### Remove Pages
+
+```text
+docuforge pdf remove-pages INPUT -o OUTPUT --page PAGE [--page PAGE ...]
+```
+
+`--page` is repeatable and uses one-based page numbers. Duplicate selections are
+rejected. Selected pages are removed, while retained pages remain in source order.
+For example, this removes pages 4 and 2; all remaining pages keep their original
+relative order:
+
+```bash
+docuforge pdf remove-pages source.pdf -o trimmed.pdf --page 4 --page 2
+```
+
+### Extract Pages
+
+```text
+docuforge pdf extract-pages INPUT -o OUTPUT --page PAGE [--page PAGE ...]
+```
+
+`--page` is repeatable and uses one-based page numbers. Duplicate selections are
+rejected. Unlike removal, extraction preserves the user's request order. This
+command writes source pages 4, 2, and 5 to the output in exactly that order:
+
+```bash
+docuforge pdf extract-pages source.pdf -o selected.pdf --page 4 --page 2 --page 5
+```
+
+## Image Commands
+
+### Images to PDF
+
+```text
+docuforge image to-pdf INPUT [INPUT ...] -o OUTPUT
+```
+
+Each image becomes one PDF page, and command-line input order determines page
+order. Supported input extensions are JPG, JPEG, PNG, BMP, TIF, and TIFF,
+case-insensitively. `-o` and `--output` select the destination PDF.
+
+```bash
+docuforge image to-pdf cover.jpg chart.png scan.tiff -o images.pdf
+```
+
+## Page Numbering and Ordering
+
+- CLI page numbers are **one-based**: page `1` is the first page.
+- Python API page indices are **zero-based**: index `0` is the first page.
+- Rotation changes selected pages without reordering the document.
+- Removal deletes selected pages and retains the others in **source order**.
+- Extraction copies selected pages in **request order**. For example,
+  `--page 4 --page 2` produces page 4 followed by page 2.
+
+Page ranges such as `1-3` and comma-separated lists such as `1,2,3` are not
+accepted. Repeat the relevant option instead.
+
+## Exit Codes and Errors
+
+The CLI follows these broad exit-code conventions:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Conversion completed successfully |
+| `1` | An operational DocuForge error occurred, such as an invalid path or PDF |
+| `2` | Command syntax or structural CLI input was invalid |
+
+Errors are written to standard error. Successful commands print a short summary
+that includes the destination.
+
+## Demo Workflow
+
+The following chain demonstrates that one DocuForge output can be used directly
+by another operation. Use two input PDFs containing at least three pages in total:
+
+```bash
+docuforge pdf merge first.pdf second.pdf -o merged.pdf
+docuforge pdf remove-pages merged.pdf -o trimmed.pdf --page 2
+docuforge pdf extract-pages trimmed.pdf -o selected.pdf --page 2 --page 1
+```
+
+The workflow merges the source documents, removes the second merged page, then
+extracts the second and first remaining pages in that requested order.
+
+## Python API
+
+High-level path APIs expose the same conversion capabilities to Python code. Page
+indices in Python are zero-based:
+
+```python
+from pathlib import Path
+
+from docuforge.converters import PdfExtractPagesPathRequest, extract_pdf_pages
+
+result = extract_pdf_pages(
+    PdfExtractPagesPathRequest(
+        input_path=Path("source.pdf"),
+        output_path=Path("selected.pdf"),
+        page_indices=(3, 1),  # Source pages 4, then 2.
+    )
+)
+
+print(result.output_path)
+```
 
 ## Development
 
+Install the development tools after activating the virtual environment:
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
-pytest
+python -m pip install -e ".[dev]"
+python -m pytest
+python -m ruff check .
 ```
 
-On Windows PowerShell:
+The repository includes unit, regression, and real-file end-to-end CLI tests.
 
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-pytest
-```
-
-## Repository layout
+Repository layout:
 
 ```text
 src/docuforge/       Application source
- tests/               Automated tests
- docs/                Product and engineering documentation
- .github/workflows/   Continuous integration workflows
+tests/               Automated tests
+.github/workflows/   Continuous integration workflows
 ```
 
-## Roadmap
+## Current Limitations
 
-See [docs/ROADMAP.md](docs/ROADMAP.md).
+- The feature surface is intentionally focused on the six CLI workflows above;
+  office-document conversion is not currently implemented.
+- Page ranges and comma-separated page lists are not supported.
+- Every CLI operation requires an explicit output file or output directory;
+  in-place PDF modification is not supported.
+- Password-protected/encrypted PDFs are rejected; password input is not supported.
+- There is currently no GUI, web interface, or REST API.
+- APIs and CLI behavior may change before a stable release.
 
-## Contributing
+## Alpha / Beta Feedback
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Early testing reports are welcome through GitHub Issues in this repository. A
+useful report includes:
+
+- operating system and Python version
+- the exact DocuForge command used
+- expected and actual results
+- complete error output
+- a minimal reproducible sample when it is safe to share
+
+Do not upload sensitive documents. Prefer a small synthetic file that reproduces
+the behavior.
 
 ## License
 
