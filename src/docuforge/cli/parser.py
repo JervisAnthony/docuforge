@@ -84,6 +84,25 @@ class _AppendUniquePage(Action):
         setattr(namespace, self.dest, ordered_pages)
 
 
+class _AppendUniqueExtractPage(Action):
+    """Append extraction pages in CLI order while rejecting duplicates."""
+
+    def __call__(
+        self,
+        parser: ArgumentParser,
+        namespace: Namespace,
+        values: int,
+        option_string: str | None = None,
+    ) -> None:
+        pages = getattr(namespace, self.dest, None)
+        if pages is not None and values in pages:
+            raise ArgumentError(self, f"Each page may be extracted only once: {values}")
+
+        ordered_pages = [] if pages is None else [*pages]
+        ordered_pages.append(values)
+        setattr(namespace, self.dest, ordered_pages)
+
+
 def package_version() -> str:
     """Return the installed package version or the source-tree development version."""
     try:
@@ -230,6 +249,40 @@ def build_parser() -> ArgumentParser:
         help="Remove one one-based PAGE; repeat for additional pages.",
     )
     remove_pages_parser.set_defaults(command_handler="pdf_remove_pages")
+
+    extract_pages_parser = pdf_commands.add_parser(
+        "extract-pages",
+        help="Extract selected PDF pages.",
+        description=(
+            "Extract selected pages in request order using one-based page numbers. "
+            "Repeat --page for additional pages."
+        ),
+    )
+    extract_pages_parser.add_argument(
+        "input_path",
+        type=Path,
+        metavar="INPUT",
+        help="Input PDF path.",
+    )
+    extract_pages_parser.add_argument(
+        "-o",
+        "--output",
+        dest="output_path",
+        type=Path,
+        required=True,
+        metavar="OUTPUT",
+        help="Destination PDF path.",
+    )
+    extract_pages_parser.add_argument(
+        "--page",
+        dest="pages",
+        type=parse_positive_page,
+        action=_AppendUniqueExtractPage,
+        required=True,
+        metavar="PAGE",
+        help="Extract one one-based PAGE; repeat in the desired output order.",
+    )
+    extract_pages_parser.set_defaults(command_handler="pdf_extract_pages")
 
     image_parser = commands.add_parser("image", help="Work with image documents.")
     image_commands = image_parser.add_subparsers(dest="image_command", required=True)
