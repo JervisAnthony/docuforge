@@ -90,6 +90,65 @@ class PdfRotateRequest(ConversionRequest):
 
 
 @dataclass(frozen=True, slots=True, init=False)
+class PdfExtractPagesRequest(ConversionRequest):
+    """An immutable request to extract selected pages from one PDF."""
+
+    output_paths: tuple[Path, ...]
+    page_indices: tuple[int, ...]
+
+    def __init__(
+        self,
+        input_paths: tuple[Path, ...],
+        output_paths: tuple[Path, ...],
+        page_indices: tuple[int, ...],
+    ) -> None:
+        """Validate structure while preserving every supplied object."""
+        if not isinstance(input_paths, tuple):
+            raise TypeError("input_paths must be a tuple of Path objects")
+        if len(input_paths) != 1:
+            raise InvalidConversionRequestError(
+                "PDF page extraction requires exactly one input path."
+            )
+        if any(not isinstance(path, Path) for path in input_paths):
+            raise TypeError("input_paths must contain only Path objects")
+        if not isinstance(output_paths, tuple):
+            raise TypeError("output_paths must be a tuple of Path objects")
+        if len(output_paths) != 1:
+            raise InvalidConversionRequestError(
+                "PDF page extraction requires exactly one output path."
+            )
+        if any(not isinstance(path, Path) for path in output_paths):
+            raise TypeError("output_paths must contain only Path objects")
+        if not isinstance(page_indices, tuple):
+            raise TypeError("page_indices must be a tuple of integers")
+        if not page_indices:
+            raise InvalidConversionRequestError("At least one page index is required.")
+        if any(
+            not isinstance(page_index, int) or isinstance(page_index, bool)
+            for page_index in page_indices
+        ):
+            raise TypeError("page_indices must contain only integers")
+        if any(page_index < 0 for page_index in page_indices):
+            raise InvalidConversionRequestError("Page indices must be non-negative.")
+
+        seen_page_indices: set[int] = set()
+        for page_index in page_indices:
+            if page_index in seen_page_indices:
+                raise InvalidConversionRequestError(
+                    f"Each page may be extracted only once: {page_index}"
+                )
+            seen_page_indices.add(page_index)
+
+        object.__setattr__(self, "input_paths", input_paths)
+        object.__setattr__(self, "output_path", output_paths[0])
+        object.__setattr__(self, "source_format", DocumentFormat.PDF)
+        object.__setattr__(self, "target_format", DocumentFormat.PDF)
+        object.__setattr__(self, "operation", ConversionOperation.SPLIT)
+        object.__setattr__(self, "output_paths", output_paths)
+        object.__setattr__(self, "page_indices", page_indices)
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class PdfRemovePagesRequest(ConversionRequest):
     """An immutable request to remove selected pages from one PDF."""
 
