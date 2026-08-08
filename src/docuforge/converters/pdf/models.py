@@ -209,6 +209,71 @@ class PdfRemovePagesRequest(ConversionRequest):
         object.__setattr__(self, "page_indices", page_indices)
 
 
+def _validate_extract_pages_path_fields(
+    input_path: Path,
+    output_path: Path,
+    page_indices: tuple[int, ...],
+) -> None:
+    """Validate high-level extraction model structure without rebuilding values."""
+    if not isinstance(input_path, Path):
+        raise TypeError("input_path must be a Path object")
+    if not isinstance(output_path, Path):
+        raise TypeError("output_path must be a Path object")
+    if not isinstance(page_indices, tuple):
+        raise TypeError("page_indices must be a tuple of integers")
+    if not page_indices:
+        raise InvalidConversionRequestError("At least one page index is required.")
+    if any(
+        not isinstance(page_index, int) or isinstance(page_index, bool)
+        for page_index in page_indices
+    ):
+        raise TypeError("page_indices must contain only integers")
+    if any(page_index < 0 for page_index in page_indices):
+        raise InvalidConversionRequestError("Page indices must be non-negative.")
+
+    seen_page_indices: set[int] = set()
+    for page_index in page_indices:
+        if page_index in seen_page_indices:
+            raise InvalidConversionRequestError(
+                f"Each page may be extracted only once: {page_index}"
+            )
+        seen_page_indices.add(page_index)
+
+
+@dataclass(frozen=True, slots=True)
+class PdfExtractPagesPathRequest:
+    """An immutable high-level request for extracting selected PDF pages."""
+
+    input_path: Path
+    output_path: Path
+    page_indices: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        """Validate structure while preserving all caller-supplied objects."""
+        _validate_extract_pages_path_fields(
+            self.input_path,
+            self.output_path,
+            self.page_indices,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PdfExtractPagesPathResult:
+    """The identity-preserving result of high-level PDF page extraction."""
+
+    input_path: Path
+    output_path: Path
+    page_indices: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        """Validate structure while preserving all supplied objects."""
+        _validate_extract_pages_path_fields(
+            self.input_path,
+            self.output_path,
+            self.page_indices,
+        )
+
+
 def _validate_remove_pages_path_fields(
     input_path: Path,
     output_path: Path,
