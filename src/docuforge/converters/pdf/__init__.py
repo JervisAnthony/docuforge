@@ -1,10 +1,12 @@
 """Public PDF converter API."""
 
 from docuforge.converters.pdf.exceptions import PdfProcessingError
+from docuforge.converters.pdf.extract_pages import PdfExtractPagesConverter
 from docuforge.converters.pdf.merge import PdfMergeConverter
 from docuforge.converters.pdf.models import (
     PageGroup,
     PageRotation,
+    PdfExtractPagesRequest,
     PdfRemovePagesPathRequest,
     PdfRemovePagesPathResult,
     PdfRemovePagesRequest,
@@ -25,6 +27,8 @@ from docuforge.converters.pdf.split_directory import split_pdf_to_directory
 __all__ = [
     "PageGroup",
     "PageRotation",
+    "PdfExtractPagesConverter",
+    "PdfExtractPagesRequest",
     "PdfMergeConverter",
     "PdfProcessingError",
     "PdfRemovePagesConverter",

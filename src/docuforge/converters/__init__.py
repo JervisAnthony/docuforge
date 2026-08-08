@@ -12,6 +12,8 @@ from docuforge.converters.image import (
 from docuforge.converters.pdf import (
     PageGroup,
     PageRotation,
+    PdfExtractPagesConverter,
+    PdfExtractPagesRequest,
     PdfMergeConverter,
     PdfProcessingError,
     PdfRemovePagesConverter,
@@ -40,6 +42,8 @@ __all__ = [
     "ImageToPdfRequest",
     "PageGroup",
     "PageRotation",
+    "PdfExtractPagesConverter",
+    "PdfExtractPagesRequest",
     "PdfMergeConverter",
     "PdfProcessingError",
     "PdfRemovePagesConverter",
