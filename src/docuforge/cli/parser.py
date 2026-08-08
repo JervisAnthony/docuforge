@@ -12,6 +12,19 @@ ROTATION_SYNTAX_ERROR = (
     "rotation must use PAGE:DEGREES with PAGE >= 1 and DEGREES one of "
     "90, 180, or 270"
 )
+PAGE_NUMBER_ERROR = "page must be a positive one-based integer"
+
+
+def parse_positive_page(value: str) -> int:
+    """Parse one positive, one-based CLI page number."""
+    if not isinstance(value, str) or re.fullmatch(r"[0-9]+", value) is None:
+        raise ArgumentTypeError(PAGE_NUMBER_ERROR)
+
+    page_number = int(value)
+    if page_number < 1:
+        raise ArgumentTypeError(PAGE_NUMBER_ERROR)
+
+    return page_number
 
 
 def parse_page_rotation(value: str) -> PageRotation:
@@ -50,6 +63,25 @@ class _AppendUniquePageRotation(Action):
         ordered_rotations = [] if rotations is None else [*rotations]
         ordered_rotations.append(values)
         setattr(namespace, self.dest, ordered_rotations)
+
+
+class _AppendUniquePage(Action):
+    """Append one-based pages in CLI order while rejecting duplicates."""
+
+    def __call__(
+        self,
+        parser: ArgumentParser,
+        namespace: Namespace,
+        values: int,
+        option_string: str | None = None,
+    ) -> None:
+        pages = getattr(namespace, self.dest, None)
+        if pages is not None and values in pages:
+            raise ArgumentError(self, f"Each page may be removed only once: {values}")
+
+        ordered_pages = [] if pages is None else [*pages]
+        ordered_pages.append(values)
+        setattr(namespace, self.dest, ordered_pages)
 
 
 def package_version() -> str:
@@ -164,6 +196,40 @@ def build_parser() -> ArgumentParser:
         ),
     )
     rotate_parser.set_defaults(command_handler="pdf_rotate")
+
+    remove_pages_parser = pdf_commands.add_parser(
+        "remove-pages",
+        help="Remove selected PDF pages.",
+        description=(
+            "Remove selected pages using one-based page numbers. "
+            "Repeat --page for additional pages."
+        ),
+    )
+    remove_pages_parser.add_argument(
+        "input_path",
+        type=Path,
+        metavar="INPUT",
+        help="Input PDF path.",
+    )
+    remove_pages_parser.add_argument(
+        "-o",
+        "--output",
+        dest="output_path",
+        type=Path,
+        required=True,
+        metavar="OUTPUT",
+        help="Destination PDF path.",
+    )
+    remove_pages_parser.add_argument(
+        "--page",
+        dest="pages",
+        type=parse_positive_page,
+        action=_AppendUniquePage,
+        required=True,
+        metavar="PAGE",
+        help="Remove one one-based PAGE; repeat for additional pages.",
+    )
+    remove_pages_parser.set_defaults(command_handler="pdf_remove_pages")
 
     image_parser = commands.add_parser("image", help="Work with image documents.")
     image_commands = image_parser.add_subparsers(dest="image_command", required=True)
