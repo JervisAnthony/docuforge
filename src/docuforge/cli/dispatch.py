@@ -4,6 +4,7 @@ from argparse import Namespace
 
 from docuforge.cli.commands.image_to_pdf import run_image_to_pdf
 from docuforge.cli.commands.pdf_merge import run_pdf_merge
+from docuforge.cli.commands.pdf_remove_pages import run_pdf_remove_pages
 from docuforge.cli.commands.pdf_rotate import run_pdf_rotate
 from docuforge.cli.commands.pdf_split import run_pdf_split
 
@@ -21,6 +22,12 @@ def dispatch(arguments: Namespace) -> int:
             arguments.input_path,
             arguments.output_path,
             arguments.rotations,
+        )
+    if command_handler == "pdf_remove_pages":
+        return run_pdf_remove_pages(
+            arguments.input_path,
+            arguments.output_path,
+            arguments.pages,
         )
     if command_handler == "image_to_pdf":
         return run_image_to_pdf(arguments.input_paths, arguments.output_path)
