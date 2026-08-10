@@ -244,7 +244,7 @@ print(result.output_path)
 Install the development tools after activating the virtual environment:
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,web]"
 python -m pytest
 python -m ruff check .
 ```
