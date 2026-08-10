@@ -67,6 +67,22 @@ Rotate page 2 clockwise by 90 degrees:
 docuforge pdf rotate combined.pdf -o rotated.pdf --rotate 2:90
 ```
 
+```
+
+## Quick Start
+
+Merge two PDFs in input order:
+
+```bash
+docuforge pdf merge first.pdf second.pdf -o combined.pdf
+```
+
+Rotate page 2 clockwise by 90 degrees:
+
+```bash
+docuforge pdf rotate combined.pdf -o rotated.pdf --rotate 2:90
+```
+
 Combine images into a PDF in command-line order:
 
 ```bash
@@ -238,8 +254,18 @@ result = extract_pdf_pages(
 
 print(result.output_path)
 ```
+```
 
-## Development
+### Remove Pages
+
+```text
+docuforge pdf remove-pages INPUT -o OUTPUT --page PAGE [--page PAGE ...]
+```
+
+`--page` is repeatable and uses one-based page numbers. Duplicate selections are
+rejected. Selected pages are removed, while retained pages remain in source order.
+For example, this removes pages 4 and 2; all remaining pages keep their original
+relative order:
 
 Install the development tools after activating the virtual environment:
 
@@ -264,6 +290,110 @@ The current system endpoints are `GET /api/v1` for API metadata and
 at `http://127.0.0.1:8000/docs`, with the OpenAPI document at `/openapi.json`.
 Document-processing HTTP endpoints and file uploads are not implemented yet; use
 the CLI or Python APIs for conversion workflows.
+docuforge pdf remove-pages source.pdf -o trimmed.pdf --page 4 --page 2
+```
+
+### Extract Pages
+
+```text
+docuforge pdf extract-pages INPUT -o OUTPUT --page PAGE [--page PAGE ...]
+```
+
+`--page` is repeatable and uses one-based page numbers. Duplicate selections are
+rejected. Unlike removal, extraction preserves the user's request order. This
+command writes source pages 4, 2, and 5 to the output in exactly that order:
+
+```bash
+docuforge pdf extract-pages source.pdf -o selected.pdf --page 4 --page 2 --page 5
+```
+
+## Image Commands
+
+### Images to PDF
+
+```text
+docuforge image to-pdf INPUT [INPUT ...] -o OUTPUT
+```
+
+Each image becomes one PDF page, and command-line input order determines page
+order. Supported input extensions are JPG, JPEG, PNG, BMP, TIF, and TIFF,
+case-insensitively. `-o` and `--output` select the destination PDF.
+
+```bash
+docuforge image to-pdf cover.jpg chart.png scan.tiff -o images.pdf
+```
+
+## Page Numbering and Ordering
+
+- CLI page numbers are **one-based**: page `1` is the first page.
+- Python API page indices are **zero-based**: index `0` is the first page.
+- Rotation changes selected pages without reordering the document.
+- Removal deletes selected pages and retains the others in **source order**.
+- Extraction copies selected pages in **request order**. For example,
+  `--page 4 --page 2` produces page 4 followed by page 2.
+
+Page ranges such as `1-3` and comma-separated lists such as `1,2,3` are not
+accepted. Repeat the relevant option instead.
+
+## Exit Codes and Errors
+
+The CLI follows these broad exit-code conventions:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Conversion completed successfully |
+| `1` | An operational DocuForge error occurred, such as an invalid path or PDF |
+| `2` | Command syntax or structural CLI input was invalid |
+
+Errors are written to standard error. Successful commands print a short summary
+that includes the destination.
+
+## Demo Workflow
+
+The following chain demonstrates that one DocuForge output can be used directly
+by another operation. Use two input PDFs containing at least three pages in total:
+
+```bash
+docuforge pdf merge first.pdf second.pdf -o merged.pdf
+docuforge pdf remove-pages merged.pdf -o trimmed.pdf --page 2
+docuforge pdf extract-pages trimmed.pdf -o selected.pdf --page 2 --page 1
+```
+
+The workflow merges the source documents, removes the second merged page, then
+extracts the second and first remaining pages in that requested order.
+
+## Python API
+
+High-level path APIs expose the same conversion capabilities to Python code. Page
+indices in Python are zero-based:
+
+```python
+from pathlib import Path
+
+from docuforge.converters import PdfExtractPagesPathRequest, extract_pdf_pages
+
+result = extract_pdf_pages(
+    PdfExtractPagesPathRequest(
+        input_path=Path("source.pdf"),
+        output_path=Path("selected.pdf"),
+        page_indices=(3, 1),  # Source pages 4, then 2.
+    )
+)
+
+print(result.output_path)
+```
+
+## Development
+
+Install the development tools after activating the virtual environment:
+
+```bash
+python -m pip install -e ".[dev]"
+python -m pytest
+python -m ruff check .
+```
+
+The repository includes unit, regression, and real-file end-to-end CLI tests.
 
 Repository layout:
 
@@ -283,6 +413,7 @@ tests/               Automated tests
 - Password-protected/encrypted PDFs are rejected; password input is not supported.
 - The REST API currently exposes system metadata and liveness only; document
   processing over HTTP and a graphical web interface are not implemented.
+- There is currently no GUI, web interface, or REST API.
 - APIs and CLI behavior may change before a stable release.
 
 ## Alpha / Beta Feedback
