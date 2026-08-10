@@ -77,6 +77,13 @@ def _validate_convert_path_fields(input_path: Path, output_path: Path) -> None:
         raise TypeError("output_path must be a Path object")
 
 
+def _validate_positive_integer(value: int | None, field_name: str) -> None:
+    if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+        raise TypeError(f"{field_name} must be an integer")
+    if value is not None and value <= 0:
+        raise InvalidConversionRequestError(f"{field_name} must be positive.")
+
+
 @dataclass(frozen=True, slots=True)
 class ImageConvertPathRequest:
     """One path-based raster format conversion request."""
@@ -113,6 +120,124 @@ class ImageConvertPathResult:
             )
         object.__setattr__(self, "source_format", source_format)
         object.__setattr__(self, "target_format", target_format)
+
+
+@dataclass(frozen=True, slots=True)
+class ImageResizePathRequest:
+    """One aspect-ratio-preserving raster resize request."""
+
+    input_path: Path
+    output_path: Path
+    max_width: int | None = None
+    max_height: int | None = None
+    allow_upscale: bool = False
+
+    def __post_init__(self) -> None:
+        """Validate resize bounds without accessing the filesystem."""
+        _validate_convert_path_fields(self.input_path, self.output_path)
+        _validate_positive_integer(self.max_width, "max_width")
+        _validate_positive_integer(self.max_height, "max_height")
+        if self.max_width is None and self.max_height is None:
+            raise InvalidConversionRequestError(
+                "At least one of max_width or max_height is required."
+            )
+        if not isinstance(self.allow_upscale, bool):
+            raise TypeError("allow_upscale must be a bool")
+
+
+@dataclass(frozen=True, slots=True)
+class ImageResizePathResult:
+    """Metadata describing one completed raster resize."""
+
+    input_path: Path
+    output_path: Path
+    source_format: DocumentFormat
+    target_format: DocumentFormat
+    input_dimensions: tuple[int, int]
+    output_dimensions: tuple[int, int]
+    output_size_bytes: int
+
+    def __post_init__(self) -> None:
+        """Validate result metadata and normalize format values."""
+        _validate_optimization_result(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ImageCompressPathRequest:
+    """One fixed-quality or maximum-size raster compression request."""
+
+    input_path: Path
+    output_path: Path
+    quality: int | None = None
+    max_bytes: int | None = None
+
+    def __post_init__(self) -> None:
+        """Require exactly one valid compression constraint."""
+        _validate_convert_path_fields(self.input_path, self.output_path)
+        _validate_positive_integer(self.quality, "quality")
+        _validate_positive_integer(self.max_bytes, "max_bytes")
+        if (self.quality is None) == (self.max_bytes is None):
+            raise InvalidConversionRequestError(
+                "Exactly one of quality or max_bytes is required."
+            )
+        if self.quality is not None and self.quality > 95:
+            raise InvalidConversionRequestError("quality must be between 1 and 95.")
+
+
+@dataclass(frozen=True, slots=True)
+class ImageCompressPathResult:
+    """Metadata describing one completed raster compression."""
+
+    input_path: Path
+    output_path: Path
+    source_format: DocumentFormat
+    target_format: DocumentFormat
+    input_dimensions: tuple[int, int]
+    output_dimensions: tuple[int, int]
+    output_size_bytes: int
+    quality_used: int | None
+
+    def __post_init__(self) -> None:
+        """Validate result metadata and normalize format values."""
+        _validate_optimization_result(self)
+        _validate_positive_integer(self.quality_used, "quality_used")
+        if self.quality_used is not None and self.quality_used > 95:
+            raise InvalidConversionRequestError(
+                "quality_used must be between 1 and 95."
+            )
+
+
+def _validate_optimization_result(
+    result: ImageResizePathResult | ImageCompressPathResult,
+) -> None:
+    _validate_convert_path_fields(result.input_path, result.output_path)
+    source_format = DocumentFormat.normalize(result.source_format)
+    target_format = DocumentFormat.normalize(result.target_format)
+    if source_format not in SUPPORTED_RASTER_FORMATS:
+        raise InvalidConversionRequestError(
+            f"Unsupported raster source format: {source_format.value}."
+        )
+    if target_format not in SUPPORTED_RASTER_FORMATS:
+        raise InvalidConversionRequestError(
+            f"Unsupported raster target format: {target_format.value}."
+        )
+    for field_name, dimensions in (
+        ("input_dimensions", result.input_dimensions),
+        ("output_dimensions", result.output_dimensions),
+    ):
+        if (
+            not isinstance(dimensions, tuple)
+            or len(dimensions) != 2
+            or any(isinstance(value, bool) or not isinstance(value, int) for value in dimensions)
+        ):
+            raise TypeError(f"{field_name} must be a two-integer tuple")
+        if any(value <= 0 for value in dimensions):
+            raise InvalidConversionRequestError(
+                f"{field_name} values must be positive."
+            )
+    _validate_positive_integer(result.output_size_bytes, "output_size_bytes")
+    object.__setattr__(result, "source_format", source_format)
+    object.__setattr__(result, "target_format", target_format)
 
 
 @dataclass(frozen=True, slots=True)

@@ -241,8 +241,11 @@ print(result.output_path)
 
 The Python API also supports raster re-encoding among JPEG, PNG, WebP, BMP,
 and TIFF through `ImageConvertPathRequest` and `convert_image_path`. The target
-format is inferred from the destination suffix; no resizing or quality tuning is
-performed.
+format is inferred from the destination suffix. The reusable image API can also
+resize while preserving aspect ratio, encode JPEG or WebP at a chosen quality,
+and compress supported raster formats to a maximum byte size through
+`resize_image_path` and `compress_image_path`. These capabilities are Python-only;
+no image optimization HTTP or CLI commands are currently exposed.
 
 ## Development
 

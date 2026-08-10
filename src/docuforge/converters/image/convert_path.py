@@ -59,20 +59,14 @@ def convert_image_path(request: ImageConvertPathRequest) -> ImageConvertPathResu
     prepared: Image.Image | None = None
     temporary_path: Path | None = None
     try:
-        with Image.open(request.input_path) as source:
-            source_format = _source_format(source)
-            if getattr(source, "n_frames", 1) != 1:
-                raise UnsupportedConversionError(
-                    "Raster format conversion supports only single-frame images."
-                )
-            source.load()
-            oriented = ImageOps.exif_transpose(source)
-            try:
-                oriented.load()
-                prepared = _prepare_for_target(oriented, target_format)
-            finally:
-                if oriented is not source:
-                    oriented.close()
+        image, source_format = _load_oriented_image(
+            request.input_path,
+            multiframe_error="Raster format conversion supports only single-frame images.",
+        )
+        try:
+            prepared = _prepare_for_target(image, target_format)
+        finally:
+            image.close()
 
         with NamedTemporaryFile(
             mode="w+b",
@@ -135,6 +129,25 @@ def _source_format(source: Image.Image) -> DocumentFormat:
             "The decoded source image format is not supported."
         )
     return source_format
+
+
+def _load_oriented_image(
+    input_path: Path, *, multiframe_error: str
+) -> tuple[Image.Image, DocumentFormat]:
+    """Decode, validate, orient, and detach one supported single-frame raster."""
+    with Image.open(input_path) as source:
+        source_format = _source_format(source)
+        if getattr(source, "n_frames", 1) != 1:
+            raise UnsupportedConversionError(multiframe_error)
+        source.load()
+        oriented = ImageOps.exif_transpose(source)
+        try:
+            oriented.load()
+            detached = oriented.copy()
+        finally:
+            if oriented is not source:
+                oriented.close()
+    return detached, source_format
 
 
 def _validate_paths(input_path: Path, output_path: Path) -> None:
