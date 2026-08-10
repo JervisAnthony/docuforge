@@ -17,6 +17,7 @@ class DocumentFormat(str, Enum):
     GIF = "gif"
     BMP = "bmp"
     TIFF = "tiff"
+    WEBP = "webp"
     TXT = "txt"
 
     @classmethod
@@ -30,6 +31,8 @@ class DocumentFormat(str, Enum):
         normalized = value.strip().lower().removeprefix(".")
         if normalized == "jpeg":
             normalized = cls.JPG.value
+        if normalized == "tif":
+            normalized = cls.TIFF.value
         if not normalized:
             raise InvalidFormatError("Document format cannot be empty.")
 

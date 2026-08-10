@@ -15,6 +15,7 @@ from docuforge.core import DocumentFormat, InvalidFormatError
         ("gif", DocumentFormat.GIF),
         ("bmp", DocumentFormat.BMP),
         ("tiff", DocumentFormat.TIFF),
+        ("webp", DocumentFormat.WEBP),
         ("txt", DocumentFormat.TXT),
     ],
 )
@@ -36,6 +37,10 @@ def test_normalize_trims_surrounding_whitespace() -> None:
 
 def test_normalize_maps_jpeg_alias_to_jpg() -> None:
     assert DocumentFormat.normalize("jpeg") is DocumentFormat.JPG
+
+
+def test_normalize_maps_tif_alias_to_tiff() -> None:
+    assert DocumentFormat.normalize("tif") is DocumentFormat.TIFF
 
 
 def test_enum_constructor_normalizes_values() -> None:
