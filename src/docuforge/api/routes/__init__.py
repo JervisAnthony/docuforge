@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from docuforge.api.config import ApiSettings
+from docuforge.api.routes.pdf import create_pdf_router
 from docuforge.api.routes.system import create_system_router
 
 
@@ -11,6 +12,8 @@ def create_api_router(settings: ApiSettings) -> APIRouter:
     router = APIRouter()
     if settings.api_prefix == "/":
         router.include_router(create_system_router(settings, metadata_path="/"))
+        router.include_router(create_pdf_router(settings))
     else:
         router.include_router(create_system_router(settings), prefix=settings.api_prefix)
+        router.include_router(create_pdf_router(settings), prefix=settings.api_prefix)
     return router

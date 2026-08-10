@@ -261,9 +261,28 @@ python -m uvicorn docuforge.api.app:app --reload
 
 The current system endpoints are `GET /api/v1` for API metadata and
 `GET /api/v1/health` for liveness. Interactive documentation is available at
-`/docs` and `/redoc`, with the OpenAPI document at `/openapi.json`.
-Document-processing HTTP endpoints and file uploads are not implemented yet; use
-the CLI or Python APIs for conversion workflows.
+`/docs` and `/redoc`, with the OpenAPI document at `/openapi.json`. PDF workflows
+are available through these operation-oriented endpoints:
+
+- `POST /api/v1/pdf/merge`
+- `POST /api/v1/pdf/split`
+- `POST /api/v1/pdf/rotate`
+- `POST /api/v1/pdf/remove-pages`
+- `POST /api/v1/pdf/extract-pages`
+
+Each operation accepts multipart uploads directly. Files are scoped to the
+request and are not persistently stored. HTTP page numbers are one-based. Split
+returns a ZIP containing one PDF per page; the other operations return a PDF.
+
+For example, merge two PDFs with:
+
+```bash
+curl -X POST \
+  -F "files=@first.pdf" \
+  -F "files=@second.pdf" \
+  http://127.0.0.1:8000/api/v1/pdf/merge \
+  -o merged.pdf
+```
 
 Repository layout:
 
@@ -281,8 +300,8 @@ tests/               Automated tests
 - Every CLI operation requires an explicit output file or output directory;
   in-place PDF modification is not supported.
 - Password-protected/encrypted PDFs are rejected; password input is not supported.
-- The REST API currently exposes system metadata and liveness only; document
-  processing over HTTP and a graphical web interface are not implemented.
+- The REST API supports the five PDF workflows above; image conversion over HTTP
+  and a graphical web interface are not implemented.
 - APIs and CLI behavior may change before a stable release.
 
 ## Alpha / Beta Feedback
