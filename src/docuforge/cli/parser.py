@@ -2,12 +2,11 @@
 
 import re
 from argparse import Action, ArgumentError, ArgumentParser, ArgumentTypeError, Namespace
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from docuforge.converters import PageRotation
+from docuforge.version import package_version
 
-DEVELOPMENT_VERSION = "0.1.0.dev0"
 ROTATION_SYNTAX_ERROR = (
     "rotation must use PAGE:DEGREES with PAGE >= 1 and DEGREES one of "
     "90, 180, or 270"
@@ -101,14 +100,6 @@ class _AppendUniqueExtractPage(Action):
         ordered_pages = [] if pages is None else [*pages]
         ordered_pages.append(values)
         setattr(namespace, self.dest, ordered_pages)
-
-
-def package_version() -> str:
-    """Return the installed package version or the source-tree development version."""
-    try:
-        return version("docuforge")
-    except PackageNotFoundError:
-        return DEVELOPMENT_VERSION
 
 
 def build_parser() -> ArgumentParser:
