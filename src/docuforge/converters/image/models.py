@@ -19,6 +19,16 @@ SUPPORTED_IMAGE_FORMATS = frozenset(
     }
 )
 
+SUPPORTED_RASTER_FORMATS = frozenset(
+    {
+        DocumentFormat.JPG,
+        DocumentFormat.PNG,
+        DocumentFormat.WEBP,
+        DocumentFormat.BMP,
+        DocumentFormat.TIFF,
+    }
+)
+
 
 def _validate_path_request_fields(
     input_paths: tuple[Path, ...],
@@ -57,6 +67,52 @@ class ImageToPdfPathResult:
     def __post_init__(self) -> None:
         """Validate structure while preserving every supplied object."""
         _validate_path_request_fields(self.input_paths, self.output_path)
+
+
+def _validate_convert_path_fields(input_path: Path, output_path: Path) -> None:
+    """Validate image-format path model structure without filesystem access."""
+    if not isinstance(input_path, Path):
+        raise TypeError("input_path must be a Path object")
+    if not isinstance(output_path, Path):
+        raise TypeError("output_path must be a Path object")
+
+
+@dataclass(frozen=True, slots=True)
+class ImageConvertPathRequest:
+    """One path-based raster format conversion request."""
+
+    input_path: Path
+    output_path: Path
+
+    def __post_init__(self) -> None:
+        """Validate structure while preserving caller-supplied paths."""
+        _validate_convert_path_fields(self.input_path, self.output_path)
+
+
+@dataclass(frozen=True, slots=True)
+class ImageConvertPathResult:
+    """The detected formats and paths from one raster conversion."""
+
+    input_path: Path
+    output_path: Path
+    source_format: DocumentFormat
+    target_format: DocumentFormat
+
+    def __post_init__(self) -> None:
+        """Validate paths and normalize supported source and target formats."""
+        _validate_convert_path_fields(self.input_path, self.output_path)
+        source_format = DocumentFormat.normalize(self.source_format)
+        target_format = DocumentFormat.normalize(self.target_format)
+        if source_format not in SUPPORTED_RASTER_FORMATS:
+            raise InvalidConversionRequestError(
+                f"Unsupported raster source format: {source_format.value}."
+            )
+        if target_format not in SUPPORTED_RASTER_FORMATS:
+            raise InvalidConversionRequestError(
+                f"Unsupported raster target format: {target_format.value}."
+            )
+        object.__setattr__(self, "source_format", source_format)
+        object.__setattr__(self, "target_format", target_format)
 
 
 @dataclass(frozen=True, slots=True)

@@ -239,6 +239,11 @@ result = extract_pdf_pages(
 print(result.output_path)
 ```
 
+The Python API also supports raster re-encoding among JPEG, PNG, WebP, BMP,
+and TIFF through `ImageConvertPathRequest` and `convert_image_path`. The target
+format is inferred from the destination suffix; no resizing or quality tuning is
+performed.
+
 ## Development
 
 Install the development tools after activating the virtual environment:
