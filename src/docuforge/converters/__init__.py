@@ -1,16 +1,22 @@
 """Public converter implementations provided by DocuForge."""
 
 from docuforge.converters.image import (
+    ImageCompressPathRequest,
+    ImageCompressPathResult,
     ImageConvertPathRequest,
     ImageConvertPathResult,
     ImageInput,
     ImageProcessingError,
+    ImageResizePathRequest,
+    ImageResizePathResult,
     ImageToPdfConverter,
     ImageToPdfPathRequest,
     ImageToPdfPathResult,
     ImageToPdfRequest,
+    compress_image_path,
     convert_image_path,
     convert_images_to_pdf,
+    resize_image_path,
 )
 from docuforge.converters.pdf import (
     PageGroup,
@@ -40,10 +46,14 @@ from docuforge.converters.pdf import (
 )
 
 __all__ = [
+    "ImageCompressPathRequest",
+    "ImageCompressPathResult",
     "ImageConvertPathRequest",
     "ImageConvertPathResult",
     "ImageInput",
     "ImageProcessingError",
+    "ImageResizePathRequest",
+    "ImageResizePathResult",
     "ImageToPdfConverter",
     "ImageToPdfPathRequest",
     "ImageToPdfPathResult",
@@ -68,10 +78,12 @@ __all__ = [
     "PdfSplitDirectoryRequest",
     "PdfSplitDirectoryResult",
     "PdfSplitRequest",
+    "compress_image_path",
     "convert_image_path",
     "convert_images_to_pdf",
     "extract_pdf_pages",
     "remove_pdf_pages",
+    "resize_image_path",
     "rotate_pdf_pages",
     "split_pdf_to_directory",
 ]
