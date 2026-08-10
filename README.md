@@ -47,6 +47,12 @@ python -m pip install -e .
 docuforge --help
 ```
 
+To run the optional web application, install the web dependencies as well:
+
+```bash
+python -m pip install -e ".[web]"
+```
+
 ## Quick Start
 
 Merge two PDFs in input order:
@@ -238,12 +244,26 @@ print(result.output_path)
 Install the development tools after activating the virtual environment:
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,web]"
 python -m pytest
 python -m ruff check .
 ```
 
 The repository includes unit, regression, and real-file end-to-end CLI tests.
+
+## Web API
+
+After installing the optional web dependencies, start the local API server with:
+
+```bash
+python -m uvicorn docuforge.api.app:app --reload
+```
+
+The current system endpoints are `GET /api/v1` for API metadata and
+`GET /api/v1/health` for liveness. Interactive documentation is available at
+`/docs` and `/redoc`, with the OpenAPI document at `/openapi.json`.
+Document-processing HTTP endpoints and file uploads are not implemented yet; use
+the CLI or Python APIs for conversion workflows.
 
 Repository layout:
 
@@ -261,7 +281,8 @@ tests/               Automated tests
 - Every CLI operation requires an explicit output file or output directory;
   in-place PDF modification is not supported.
 - Password-protected/encrypted PDFs are rejected; password input is not supported.
-- There is currently no GUI, web interface, or REST API.
+- The REST API currently exposes system metadata and liveness only; document
+  processing over HTTP and a graphical web interface are not implemented.
 - APIs and CLI behavior may change before a stable release.
 
 ## Alpha / Beta Feedback
