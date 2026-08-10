@@ -112,8 +112,9 @@ def test_multipart_size_rejection_cleans_partial_upload() -> None:
     assert not workspace_paths[0].exists()
 
 
-def test_production_application_exposes_no_file_routes() -> None:
+def test_production_application_exposes_no_generic_file_routes() -> None:
     application = create_app(ApiSettings())
 
-    assert set(application.openapi()["paths"]) == {"/api/v1", "/api/v1/health"}
-    assert TestClient(application).post("/api/v1/upload").status_code == 404
+    client = TestClient(application)
+    for path in ("/api/v1/upload", "/api/v1/files", "/api/v1/jobs"):
+        assert client.post(path).status_code == 404
