@@ -101,7 +101,7 @@ def test_cli_import_does_not_initialize_fastapi() -> None:
 
 def test_api_dependencies_do_not_leak_into_sibling_packages() -> None:
     source_root = Path(__file__).resolve().parents[2] / "src" / "docuforge"
-    forbidden_roots = ("fastapi", "docuforge.api")
+    forbidden_roots = ("fastapi", "starlette", "docuforge.api")
 
     for package_name in ("core", "converters", "cli"):
         for source_path in (source_root / package_name).rglob("*.py"):
