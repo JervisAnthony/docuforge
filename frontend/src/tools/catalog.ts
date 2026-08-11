@@ -55,7 +55,7 @@ export const toolCatalog = [
     title: 'Convert image',
     description: 'Change an image to JPEG, PNG, WebP, BMP, or TIFF.',
     endpoint: '/api/v1/images/convert',
-    interfaceStatus: 'backend-ready',
+    interfaceStatus: 'operational',
   },
   {
     id: 'image-resize',
@@ -63,15 +63,15 @@ export const toolCatalog = [
     title: 'Resize image',
     description: 'Fit an image within new dimensions without distorting it.',
     endpoint: '/api/v1/images/resize',
-    interfaceStatus: 'backend-ready',
+    interfaceStatus: 'operational',
   },
   {
     id: 'image-compress',
     category: 'image',
     title: 'Compress image',
-    description: 'Reduce file size using a quality or exact size target.',
+    description: 'Reduce file size using a quality or maximum file size target.',
     endpoint: '/api/v1/images/compress',
-    interfaceStatus: 'backend-ready',
+    interfaceStatus: 'operational',
   },
   {
     id: 'images-to-pdf',
@@ -79,7 +79,7 @@ export const toolCatalog = [
     title: 'Images to PDF',
     description: 'Arrange multiple images as pages in one PDF document.',
     endpoint: '/api/v1/images/to-pdf',
-    interfaceStatus: 'backend-ready',
+    interfaceStatus: 'operational',
   },
 ] as const satisfies readonly ToolDefinition[]
 

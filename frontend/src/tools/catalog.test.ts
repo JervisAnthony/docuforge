@@ -34,11 +34,6 @@ describe('tool catalog', () => {
       '/api/v1/images/compress',
       '/api/v1/images/to-pdf',
     ])
-    expect(toolsForCategory('pdf').every((tool) => tool.interfaceStatus === 'operational')).toBe(
-      true,
-    )
-    expect(
-      toolsForCategory('image').every((tool) => tool.interfaceStatus === 'backend-ready'),
-    ).toBe(true)
+    expect(toolCatalog.every((tool) => tool.interfaceStatus === 'operational')).toBe(true)
   })
 })

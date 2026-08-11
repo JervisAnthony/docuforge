@@ -1,6 +1,6 @@
-import type { ApiClient } from '../api/client'
+import type { MultipartRequestClient } from '../workflows/useSubmission'
 
-export type PdfRequestClient = Pick<ApiClient, 'postMultipartForBlob'>
+export type PdfRequestClient = MultipartRequestClient
 
 export interface PdfFormProps {
   client?: PdfRequestClient

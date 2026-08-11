@@ -1,4 +1,4 @@
-import type { WorkflowFeedback } from '../pdf/usePdfSubmission'
+import type { WorkflowFeedback } from '../workflows/useSubmission'
 
 interface WorkflowStatusProps {
   feedback: WorkflowFeedback

@@ -12,6 +12,7 @@ export type ImageToolId =
   | 'image-compress'
   | 'images-to-pdf'
 export type ToolId = PdfToolId | ImageToolId
+export type ToolInterfaceStatus = 'operational' | 'backend-ready'
 
 interface ToolMetadata {
   title: string
@@ -28,7 +29,16 @@ export interface PdfToolDefinition extends ToolMetadata {
 export interface ImageToolDefinition extends ToolMetadata {
   id: ImageToolId
   category: 'image'
-  interfaceStatus: 'backend-ready'
+  interfaceStatus: 'operational'
 }
 
-export type ToolDefinition = PdfToolDefinition | ImageToolDefinition
+export type BackendReadyToolDefinition = ToolMetadata &
+  (
+    | { id: PdfToolId; category: 'pdf'; interfaceStatus: 'backend-ready' }
+    | { id: ImageToolId; category: 'image'; interfaceStatus: 'backend-ready' }
+  )
+
+export type ToolDefinition =
+  | PdfToolDefinition
+  | ImageToolDefinition
+  | BackendReadyToolDefinition

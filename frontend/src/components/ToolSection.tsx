@@ -1,11 +1,11 @@
-import type { PdfToolId, ToolDefinition } from '../tools/types'
+import type { ToolDefinition, ToolId } from '../tools/types'
 import { ToolCard } from './ToolCard'
 
 interface ToolSectionProps {
   title: string
   description: string
   tools: readonly ToolDefinition[]
-  onOpen?: (toolId: PdfToolId) => void
+  onOpen?: (toolId: ToolId) => void
 }
 
 export function ToolSection({ title, description, tools, onOpen }: ToolSectionProps) {
