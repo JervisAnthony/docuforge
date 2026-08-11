@@ -4,16 +4,21 @@ from collections.abc import Sequence
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from docuforge.api.config import ApiSettings
 from docuforge.api.errors import ApiError
+from docuforge.api.images import CANONICAL_IMAGE_SUFFIX
 from docuforge.api.uploads import StoredUpload
 from docuforge.converters import (
     PageRotation,
     PdfExtractPagesPathRequest,
     PdfMergeConverter,
+    PdfProcessingError,
     PdfRemovePagesPathRequest,
     PdfRotatePathRequest,
     PdfSplitDirectoryRequest,
+    PdfToImagesPathRequest,
     extract_pdf_pages,
+    pdf_to_images_path,
     remove_pdf_pages,
     rotate_pdf_pages,
     split_pdf_to_directory,
@@ -22,6 +27,8 @@ from docuforge.core import (
     ConversionOperation,
     ConversionRequest,
     DocumentFormat,
+    InvalidConversionRequestError,
+    UnsupportedConversionError,
 )
 
 PDF_MEDIA_TYPE = "application/pdf"
@@ -80,6 +87,17 @@ def parse_rotations(values: Sequence[str] | None) -> tuple[PageRotation, ...]:
         seen_pages.add(page)
         rotations.append(PageRotation(page_index=page - 1, degrees=degrees))
     return tuple(rotations)
+
+
+def parse_pdf_render_dpi(value: str | None) -> int:
+    """Parse the deliberately constrained public PDF rendering DPI."""
+    normalized = "150" if value is None else value
+    if not normalized.isascii() or not normalized.isdigit():
+        raise _invalid_pdf_render_request()
+    dpi = int(normalized)
+    if not 72 <= dpi <= 300:
+        raise _invalid_pdf_render_request()
+    return dpi
 
 
 def merge_pdfs(uploads: Sequence[StoredUpload], output_path: Path) -> None:
@@ -157,6 +175,50 @@ def extract_pdf_pages_from_upload(
     )
 
 
+def render_pdf_images_archive(
+    upload: StoredUpload,
+    output_path: Path,
+    *,
+    output_format: DocumentFormat,
+    dpi: int,
+    settings: ApiSettings,
+) -> None:
+    """Render one uploaded PDF and package client-safe ordered image members."""
+    render_directory = output_path.parent / "rendered-pages"
+    try:
+        result = pdf_to_images_path(
+            PdfToImagesPathRequest(
+                input_path=upload.stored_path,
+                output_directory=render_directory,
+                output_format=output_format,
+                dpi=dpi,
+                max_pages=settings.max_pdf_render_pages,
+                max_pixels_per_page=settings.max_pdf_render_pixels_per_page,
+            )
+        )
+    except (TypeError, InvalidConversionRequestError, UnsupportedConversionError):
+        raise ApiError(
+            status_code=400,
+            code="invalid_pdf_render_request",
+            message="The PDF rendering request is invalid.",
+        ) from None
+    except PdfProcessingError:
+        raise ApiError(
+            status_code=422,
+            code="pdf_processing_failed",
+            message="The PDF document could not be processed.",
+        ) from None
+
+    stem = _client_stem(upload.original_name)
+    suffix = CANONICAL_IMAGE_SUFFIX[output_format]
+    with ZipFile(output_path, mode="w", compression=ZIP_DEFLATED) as archive:
+        for page_number, page_path in enumerate(result.output_paths, start=1):
+            archive.write(
+                page_path,
+                arcname=f"{stem}-page-{page_number:04d}{suffix}",
+            )
+
+
 def derived_download_name(original_name: str, suffix: str) -> str:
     """Build a safe client-facing filename from a normalized upload basename."""
     extension = Path(suffix).suffix
@@ -186,4 +248,12 @@ def _invalid_rotation_error() -> ApiError:
         status_code=400,
         code="invalid_rotation",
         message="Rotations must use unique positive pages and 90, 180, or 270 degrees.",
+    )
+
+
+def _invalid_pdf_render_request() -> ApiError:
+    return ApiError(
+        status_code=400,
+        code="invalid_pdf_render_request",
+        message="The PDF rendering request is invalid.",
     )

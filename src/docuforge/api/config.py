@@ -18,6 +18,8 @@ class ApiSettings:
     max_upload_file_bytes: int = 50 * 1024 * 1024
     max_upload_request_bytes: int = 200 * 1024 * 1024
     upload_chunk_bytes: int = 1024 * 1024
+    max_pdf_render_pages: int = 100
+    max_pdf_render_pixels_per_page: int = 40_000_000
 
     def __post_init__(self) -> None:
         for field_name in ("application_name", "version", "environment"):
@@ -37,6 +39,8 @@ class ApiSettings:
             "max_upload_file_bytes",
             "max_upload_request_bytes",
             "upload_chunk_bytes",
+            "max_pdf_render_pages",
+            "max_pdf_render_pixels_per_page",
         )
         for field_name in upload_limit_fields:
             value = getattr(self, field_name)

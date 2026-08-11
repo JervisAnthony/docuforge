@@ -11,6 +11,7 @@ from starlette.concurrency import run_in_threadpool
 from docuforge.api.config import ApiSettings
 from docuforge.api.errors import ApiError
 from docuforge.api.files import create_download_response
+from docuforge.api.images import parse_image_format
 from docuforge.api.pdf import (
     PDF_MEDIA_TYPE,
     ZIP_MEDIA_TYPE,
@@ -18,8 +19,10 @@ from docuforge.api.pdf import (
     extract_pdf_pages_from_upload,
     merge_pdfs,
     parse_page_selection,
+    parse_pdf_render_dpi,
     parse_rotations,
     remove_pdf_pages_from_upload,
+    render_pdf_images_archive,
     rotate_pdf,
     split_pdf,
 )
@@ -170,6 +173,48 @@ def create_pdf_router(settings: ApiSettings) -> APIRouter:
             policy=policy,
         )
 
+    @router.post(
+        "/to-images",
+        summary="Render PDF pages to images",
+        description="Render every page in order and return the images in a ZIP archive.",
+        response_class=FileResponse,
+        responses=_binary_responses(ZIP_MEDIA_TYPE),
+    )
+    async def to_images(
+        file: Annotated[
+            list[UploadFile], File(description="Exactly one PDF document to render.")
+        ],
+        format: Annotated[str | None, Form(description="Target raster format.")] = None,
+        dpi: Annotated[str | None, Form(description="Render DPI from 72 through 300.")] = None,
+    ) -> FileResponse:
+        target_format = parse_image_format(format)
+        render_dpi = parse_pdf_render_dpi(dpi)
+        with RequestWorkspace() as workspace:
+            upload = await _store_one(
+                file,
+                workspace=workspace,
+                policy=policy,
+                error_code="invalid_pdf_render_request",
+                error_message="PDF rendering requires exactly one file.",
+            )
+            output_path = workspace.path / "rendered-images.zip"
+            await run_in_threadpool(
+                render_pdf_images_archive,
+                upload,
+                output_path,
+                output_format=target_format,
+                dpi=render_dpi,
+                settings=settings,
+            )
+            return create_download_response(
+                workspace=workspace,
+                output_path=output_path,
+                download_filename=derived_download_name(
+                    upload.original_name, "-images.zip"
+                ),
+                media_type=ZIP_MEDIA_TYPE,
+            )
+
     return router
 
 
@@ -178,13 +223,15 @@ async def _store_one(
     *,
     workspace: RequestWorkspace,
     policy: UploadPolicy,
+    error_code: str = "invalid_pdf_request",
+    error_message: str = "This PDF operation requires exactly one file.",
 ) -> StoredUpload:
     stored_uploads = await store_uploads(uploads, workspace=workspace, policy=policy)
     if len(stored_uploads) != 1:
         raise ApiError(
             status_code=400,
-            code="invalid_pdf_request",
-            message="This PDF operation requires exactly one file.",
+            code=error_code,
+            message=error_message,
         )
     return stored_uploads[0]
 

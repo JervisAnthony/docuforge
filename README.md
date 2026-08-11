@@ -244,8 +244,9 @@ and TIFF through `ImageConvertPathRequest` and `convert_image_path`. The target
 format is inferred from the destination suffix. The reusable image API can also
 resize while preserving aspect ratio, encode JPEG or WebP at a chosen quality,
 and compress supported raster formats to a maximum byte size through
-`resize_image_path` and `compress_image_path`. These capabilities are Python-only;
-no image optimization HTTP or CLI commands are currently exposed.
+`resize_image_path` and `compress_image_path`. `PdfToImagesPathRequest` and
+`pdf_to_images_path` render ordered PDF pages to JPEG, PNG, WebP, BMP, or TIFF at
+a bounded DPI, with deterministic names such as `page-0001.png`.
 
 ## Development
 
@@ -277,10 +278,25 @@ are available through these operation-oriented endpoints:
 - `POST /api/v1/pdf/rotate`
 - `POST /api/v1/pdf/remove-pages`
 - `POST /api/v1/pdf/extract-pages`
+- `POST /api/v1/pdf/to-images`
+- `POST /api/v1/images/convert`
+- `POST /api/v1/images/resize`
+- `POST /api/v1/images/compress`
+- `POST /api/v1/images/to-pdf`
 
 Each operation accepts multipart uploads directly. Files are scoped to the
 request and are not persistently stored. HTTP page numbers are one-based. Split
-returns a ZIP containing one PDF per page; the other operations return a PDF.
+and PDF-to-images return ZIP archives; image operations return their requested
+image or PDF download, and the remaining PDF operations return a PDF.
+
+Image conversion accepts one `file` plus an explicit `format`. Resizing adds
+`max_width` and/or `max_height` with optional `allow_upscale=true|false`, while
+preserving aspect ratio. Compression accepts exactly one of `quality` or
+`max_bytes`. Images-to-PDF accepts repeated `files` fields and preserves their
+multipart order. PDF-to-images accepts one PDF, a target `format`, and optional
+`dpi` (default 150, allowed 72–300), returning a ZIP of ordered page images.
+Supported target aliases are `jpg`, `jpeg`, `png`, `webp`, `bmp`, `tif`, and
+`tiff`.
 
 For example, merge two PDFs with:
 
@@ -302,14 +318,12 @@ tests/               Automated tests
 
 ## Current Limitations
 
-- The feature surface is intentionally focused on the six CLI workflows above;
-  office-document conversion is not currently implemented.
+- The graphical browser interface, authentication, persistent cloud storage,
+  background jobs, OCR, and office-document conversion are not implemented.
 - Page ranges and comma-separated page lists are not supported.
 - Every CLI operation requires an explicit output file or output directory;
   in-place PDF modification is not supported.
 - Password-protected/encrypted PDFs are rejected; password input is not supported.
-- The REST API supports the five PDF workflows above; image conversion over HTTP
-  and a graphical web interface are not implemented.
 - APIs and CLI behavior may change before a stable release.
 
 ## Alpha / Beta Feedback

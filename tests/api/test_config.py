@@ -18,6 +18,8 @@ def test_settings_defaults() -> None:
     assert settings.max_upload_file_bytes == 50 * 1024 * 1024
     assert settings.max_upload_request_bytes == 200 * 1024 * 1024
     assert settings.upload_chunk_bytes == 1024 * 1024
+    assert settings.max_pdf_render_pages == 100
+    assert settings.max_pdf_render_pixels_per_page == 40_000_000
 
 
 def test_settings_accept_custom_values() -> None:
@@ -31,6 +33,8 @@ def test_settings_accept_custom_values() -> None:
         max_upload_file_bytes=100,
         max_upload_request_bytes=250,
         upload_chunk_bytes=10,
+        max_pdf_render_pages=4,
+        max_pdf_render_pixels_per_page=5_000,
     )
 
     assert settings == ApiSettings(
@@ -43,6 +47,8 @@ def test_settings_accept_custom_values() -> None:
         max_upload_file_bytes=100,
         max_upload_request_bytes=250,
         upload_chunk_bytes=10,
+        max_pdf_render_pages=4,
+        max_pdf_render_pixels_per_page=5_000,
     )
 
 
@@ -85,6 +91,8 @@ def test_settings_are_immutable() -> None:
         "max_upload_file_bytes",
         "max_upload_request_bytes",
         "upload_chunk_bytes",
+        "max_pdf_render_pages",
+        "max_pdf_render_pixels_per_page",
     ],
 )
 @pytest.mark.parametrize("value", [0, -1, True, False, 1.5, "1"])
