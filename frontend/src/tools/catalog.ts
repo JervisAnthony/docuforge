@@ -7,7 +7,7 @@ export const toolCatalog = [
     title: 'Merge PDF',
     description: 'Combine multiple PDF documents in the order you choose.',
     endpoint: '/api/v1/pdf/merge',
-    interfaceStatus: 'backend-ready',
+    interfaceStatus: 'operational',
   },
   {
     id: 'pdf-split',
@@ -15,7 +15,7 @@ export const toolCatalog = [
     title: 'Split PDF',
     description: 'Separate every page into its own downloadable PDF.',
     endpoint: '/api/v1/pdf/split',
-    interfaceStatus: 'backend-ready',
+    interfaceStatus: 'operational',
   },
   {
     id: 'pdf-rotate',
@@ -23,7 +23,7 @@ export const toolCatalog = [
     title: 'Rotate PDF',
     description: 'Turn selected pages while preserving document order.',
     endpoint: '/api/v1/pdf/rotate',
-    interfaceStatus: 'backend-ready',
+    interfaceStatus: 'operational',
   },
   {
     id: 'pdf-remove-pages',
@@ -31,7 +31,7 @@ export const toolCatalog = [
     title: 'Remove pages',
     description: 'Create a cleaner PDF without pages you no longer need.',
     endpoint: '/api/v1/pdf/remove-pages',
-    interfaceStatus: 'backend-ready',
+    interfaceStatus: 'operational',
   },
   {
     id: 'pdf-extract-pages',
@@ -39,7 +39,7 @@ export const toolCatalog = [
     title: 'Extract pages',
     description: 'Build a new PDF from selected pages in your preferred order.',
     endpoint: '/api/v1/pdf/extract-pages',
-    interfaceStatus: 'backend-ready',
+    interfaceStatus: 'operational',
   },
   {
     id: 'pdf-to-images',
@@ -47,7 +47,7 @@ export const toolCatalog = [
     title: 'PDF to images',
     description: 'Render document pages as high-quality image files.',
     endpoint: '/api/v1/pdf/to-images',
-    interfaceStatus: 'backend-ready',
+    interfaceStatus: 'operational',
   },
   {
     id: 'image-convert',
@@ -85,4 +85,12 @@ export const toolCatalog = [
 
 export function toolsForCategory(category: ToolDefinition['category']) {
   return toolCatalog.filter((tool) => tool.category === category)
+}
+
+export function toolById(id: ToolDefinition['id']): ToolDefinition {
+  const tool = toolCatalog.find((candidate) => candidate.id === id)
+  if (!tool) {
+    throw new Error(`Unknown tool: ${id}`)
+  }
+  return tool
 }

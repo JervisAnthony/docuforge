@@ -1,13 +1,14 @@
-import type { ToolDefinition } from '../tools/types'
+import type { PdfToolId, ToolDefinition } from '../tools/types'
 import { ToolCard } from './ToolCard'
 
 interface ToolSectionProps {
   title: string
   description: string
   tools: readonly ToolDefinition[]
+  onOpen?: (toolId: PdfToolId) => void
 }
 
-export function ToolSection({ title, description, tools }: ToolSectionProps) {
+export function ToolSection({ title, description, tools, onOpen }: ToolSectionProps) {
   const headingId = `${title.toLowerCase().replace(/\s+/g, '-')}-heading`
 
   return (
@@ -21,7 +22,7 @@ export function ToolSection({ title, description, tools }: ToolSectionProps) {
       </div>
       <div className="tool-grid">
         {tools.map((tool) => (
-          <ToolCard key={tool.id} tool={tool} />
+          <ToolCard key={tool.id} tool={tool} onOpen={onOpen} />
         ))}
       </div>
     </section>

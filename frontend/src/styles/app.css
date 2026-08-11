@@ -223,6 +223,307 @@ main {
   font-size: 0.62rem;
 }
 
+.tool-card__action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: auto;
+}
+
+.tool-card__action .tool-card__status {
+  margin: 0;
+}
+
+.tool-card__status--ready {
+  color: var(--color-success);
+}
+
+.button {
+  min-height: 2.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.button--primary {
+  background: var(--color-accent);
+  color: white;
+}
+
+.button--primary:not(:disabled):hover {
+  background: var(--color-accent-hover);
+}
+
+.button--secondary {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.button--secondary:not(:disabled):hover,
+.button--quiet:not(:disabled):hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent-hover);
+}
+
+.button--quiet,
+.button--back {
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.button--danger:not(:disabled) {
+  color: var(--color-error);
+}
+
+.workflow-workspace {
+  width: min(100%, 52rem);
+  padding-block: clamp(var(--space-8), 6vw, var(--space-12)) var(--space-16);
+}
+
+.button--back {
+  margin-bottom: var(--space-8);
+  padding-inline: var(--space-2);
+}
+
+.workflow-heading {
+  margin-bottom: var(--space-8);
+}
+
+.workflow-heading h1 {
+  margin-bottom: var(--space-3);
+  font-size: clamp(2rem, 5vw, 3rem);
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+}
+
+.workflow-heading > p:last-child {
+  max-width: 42rem;
+  margin-bottom: 0;
+  color: var(--color-text-secondary);
+  font-size: 1.05rem;
+}
+
+.workflow-panel {
+  padding: clamp(var(--space-5), 4vw, var(--space-8));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.workflow-form {
+  display: grid;
+  gap: var(--space-6);
+}
+
+.form-field {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.form-field > label,
+.rotation-fieldset > legend {
+  color: var(--color-text);
+  font-weight: 750;
+}
+
+.field-help {
+  margin-bottom: 0;
+  color: var(--color-text-muted);
+  font-size: 0.86rem;
+}
+
+.field-error {
+  margin-bottom: 0;
+  color: var(--color-error);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.form-field input,
+.form-field select {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.form-field input[type='file'] {
+  min-height: 3.25rem;
+  padding: var(--space-3);
+  background: var(--color-surface-elevated);
+}
+
+.form-field input[aria-invalid='true'],
+.form-field select[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+
+.form-field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5);
+}
+
+.selected-file,
+.selected-files li {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-elevated);
+}
+
+.selected-file > div,
+.selected-files__name {
+  min-width: 0;
+}
+
+.selected-file strong,
+.selected-file span,
+.selected-files__name strong,
+.selected-files__name span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.selected-file span,
+.selected-files__name span {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.selected-files {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.selected-files__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.selected-files__header h2 {
+  margin-bottom: 0;
+  font-size: 1rem;
+}
+
+.selected-files ol {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding-left: var(--space-8);
+}
+
+.selected-files__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.selected-files__actions .button {
+  min-height: 2.25rem;
+  padding: var(--space-1) var(--space-2);
+  font-size: 0.78rem;
+}
+
+.rotation-fieldset {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.rotation-rows {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.rotation-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: end;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-elevated);
+}
+
+.rotation-row__remove {
+  align-self: end;
+}
+
+.workflow-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.workflow-feedback {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-hover);
+  overflow-wrap: anywhere;
+}
+
+.workflow-feedback--error {
+  background: var(--color-pdf-soft);
+  color: var(--color-error);
+}
+
+.processing-spinner {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .app-footer {
   padding-block: var(--space-6);
   border-top: 1px solid var(--color-border);
@@ -252,6 +553,32 @@ main {
 
   .tool-card {
     min-height: 12.5rem;
+  }
+
+  .tool-card__action,
+  .selected-file,
+  .selected-files li,
+  .selected-files__header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .tool-card__action .button,
+  .workflow-actions .button {
+    width: 100%;
+  }
+
+  .workflow-panel {
+    padding-inline: var(--space-4);
+  }
+
+  .form-field-row,
+  .rotation-row {
+    grid-template-columns: 1fr;
+  }
+
+  .selected-files__actions {
+    justify-content: flex-start;
   }
 }
 

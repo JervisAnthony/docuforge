@@ -278,9 +278,10 @@ npm run dev
 ```
 
 Open the local URL printed by Vite. During development, Vite proxies `/api` to
-the FastAPI server at `127.0.0.1:8000`. The current frontend provides the
-responsive application shell, tool catalog, and API connectivity status;
-browser conversion workflows will be connected in subsequent frontend commits.
+the FastAPI server at `127.0.0.1:8000`. The browser application supports PDF
+merge, split, rotation, page removal, page extraction, and PDF-to-images
+workflows. Image browser workflows will be connected in the next frontend
+commit.
 
 Frontend quality checks run from `frontend/`:
 
@@ -349,10 +350,11 @@ frontend/            React browser application
 
 ## Current Limitations
 
-- The browser application currently provides its shell and tool catalog; file
-  conversion forms are not connected yet. Authentication, persistent cloud
-  storage, background jobs, OCR, and office-document conversion are not implemented.
-- Page ranges and comma-separated page lists are not supported.
+- Image conversion forms are not connected in the browser yet. Authentication,
+  persistent cloud storage, background jobs, OCR, and office-document conversion
+  are not implemented.
+- Page-range syntax is not supported; browser page selections use comma-separated
+  positive page numbers.
 - Every CLI operation requires an explicit output file or output directory;
   in-place PDF modification is not supported.
 - Password-protected/encrypted PDFs are rejected; password input is not supported.
