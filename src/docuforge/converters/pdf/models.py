@@ -10,6 +10,16 @@ from docuforge.core import (
     InvalidConversionRequestError,
 )
 
+PDF_IMAGE_FORMATS = frozenset(
+    {
+        DocumentFormat.JPG,
+        DocumentFormat.PNG,
+        DocumentFormat.WEBP,
+        DocumentFormat.BMP,
+        DocumentFormat.TIFF,
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class PageRotation:
@@ -417,6 +427,97 @@ class PdfSplitDirectoryResult:
     input_path: Path
     output_directory: Path
     output_paths: tuple[Path, ...]
+
+
+def _validate_pdf_to_images_fields(
+    input_path: Path,
+    output_directory: Path,
+    output_format: DocumentFormat | str,
+    dpi: int,
+    max_pages: int,
+    max_pixels_per_page: int,
+) -> DocumentFormat:
+    if not isinstance(input_path, Path):
+        raise TypeError("input_path must be a Path object")
+    if not isinstance(output_directory, Path):
+        raise TypeError("output_directory must be a Path object")
+    for field_name, value in (
+        ("dpi", dpi),
+        ("max_pages", max_pages),
+        ("max_pixels_per_page", max_pixels_per_page),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"{field_name} must be an integer")
+        if value <= 0:
+            raise InvalidConversionRequestError(f"{field_name} must be positive.")
+    if dpi > 600:
+        raise InvalidConversionRequestError("dpi must not exceed 600.")
+    normalized_format = DocumentFormat.normalize(output_format)
+    if normalized_format not in PDF_IMAGE_FORMATS:
+        raise InvalidConversionRequestError(
+            f"Unsupported PDF render output format: {normalized_format.value}."
+        )
+    return normalized_format
+
+
+@dataclass(frozen=True, slots=True)
+class PdfToImagesPathRequest:
+    """A bounded request to render every PDF page into one raster file."""
+
+    input_path: Path
+    output_directory: Path
+    output_format: DocumentFormat
+    dpi: int = 150
+    max_pages: int = 100
+    max_pixels_per_page: int = 40_000_000
+
+    def __post_init__(self) -> None:
+        """Validate adapter-neutral render settings without filesystem access."""
+        normalized_format = _validate_pdf_to_images_fields(
+            self.input_path,
+            self.output_directory,
+            self.output_format,
+            self.dpi,
+            self.max_pages,
+            self.max_pixels_per_page,
+        )
+        object.__setattr__(self, "output_format", normalized_format)
+
+
+@dataclass(frozen=True, slots=True)
+class PdfToImagesPathResult:
+    """The ordered files produced by a completed PDF page render."""
+
+    input_path: Path
+    output_directory: Path
+    output_format: DocumentFormat
+    dpi: int
+    page_count: int
+    output_paths: tuple[Path, ...]
+
+    def __post_init__(self) -> None:
+        """Validate completed-render metadata."""
+        if isinstance(self.page_count, bool) or not isinstance(self.page_count, int):
+            raise TypeError("page_count must be an integer")
+        if self.page_count <= 0:
+            raise InvalidConversionRequestError("page_count must be positive.")
+        normalized_format = _validate_pdf_to_images_fields(
+            self.input_path,
+            self.output_directory,
+            self.output_format,
+            self.dpi,
+            max(self.page_count, 1),
+            1,
+        )
+        if not isinstance(self.output_paths, tuple) or any(
+            not isinstance(path, Path) for path in self.output_paths
+        ):
+            raise TypeError("output_paths must be a tuple of Path objects")
+        if len(self.output_paths) != self.page_count:
+            raise InvalidConversionRequestError(
+                "output_paths count must match page_count."
+            )
+        object.__setattr__(self, "output_format", normalized_format)
 
 
 @dataclass(frozen=True, slots=True)
