@@ -1,0 +1,88 @@
+import type { ToolDefinition } from './types'
+
+export const toolCatalog = [
+  {
+    id: 'pdf-merge',
+    category: 'pdf',
+    title: 'Merge PDF',
+    description: 'Combine multiple PDF documents in the order you choose.',
+    endpoint: '/api/v1/pdf/merge',
+    interfaceStatus: 'backend-ready',
+  },
+  {
+    id: 'pdf-split',
+    category: 'pdf',
+    title: 'Split PDF',
+    description: 'Separate every page into its own downloadable PDF.',
+    endpoint: '/api/v1/pdf/split',
+    interfaceStatus: 'backend-ready',
+  },
+  {
+    id: 'pdf-rotate',
+    category: 'pdf',
+    title: 'Rotate PDF',
+    description: 'Turn selected pages while preserving document order.',
+    endpoint: '/api/v1/pdf/rotate',
+    interfaceStatus: 'backend-ready',
+  },
+  {
+    id: 'pdf-remove-pages',
+    category: 'pdf',
+    title: 'Remove pages',
+    description: 'Create a cleaner PDF without pages you no longer need.',
+    endpoint: '/api/v1/pdf/remove-pages',
+    interfaceStatus: 'backend-ready',
+  },
+  {
+    id: 'pdf-extract-pages',
+    category: 'pdf',
+    title: 'Extract pages',
+    description: 'Build a new PDF from selected pages in your preferred order.',
+    endpoint: '/api/v1/pdf/extract-pages',
+    interfaceStatus: 'backend-ready',
+  },
+  {
+    id: 'pdf-to-images',
+    category: 'pdf',
+    title: 'PDF to images',
+    description: 'Render document pages as high-quality image files.',
+    endpoint: '/api/v1/pdf/to-images',
+    interfaceStatus: 'backend-ready',
+  },
+  {
+    id: 'image-convert',
+    category: 'image',
+    title: 'Convert image',
+    description: 'Change an image to JPEG, PNG, WebP, BMP, or TIFF.',
+    endpoint: '/api/v1/images/convert',
+    interfaceStatus: 'backend-ready',
+  },
+  {
+    id: 'image-resize',
+    category: 'image',
+    title: 'Resize image',
+    description: 'Fit an image within new dimensions without distorting it.',
+    endpoint: '/api/v1/images/resize',
+    interfaceStatus: 'backend-ready',
+  },
+  {
+    id: 'image-compress',
+    category: 'image',
+    title: 'Compress image',
+    description: 'Reduce file size using a quality or exact size target.',
+    endpoint: '/api/v1/images/compress',
+    interfaceStatus: 'backend-ready',
+  },
+  {
+    id: 'images-to-pdf',
+    category: 'image',
+    title: 'Images to PDF',
+    description: 'Arrange multiple images as pages in one PDF document.',
+    endpoint: '/api/v1/images/to-pdf',
+    interfaceStatus: 'backend-ready',
+  },
+] as const satisfies readonly ToolDefinition[]
+
+export function toolsForCategory(category: ToolDefinition['category']) {
+  return toolCatalog.filter((tool) => tool.category === category)
+}

@@ -260,6 +260,36 @@ python -m ruff check .
 
 The repository includes unit, regression, and real-file end-to-end CLI tests.
 
+### Frontend development
+
+Frontend development requires Node.js 24 and npm in addition to the Python
+environment above. Run the API and frontend in separate terminals:
+
+```bash
+# Backend
+python -m uvicorn docuforge.api.app:app --reload
+```
+
+```bash
+# Frontend
+cd frontend
+npm ci
+npm run dev
+```
+
+Open the local URL printed by Vite. During development, Vite proxies `/api` to
+the FastAPI server at `127.0.0.1:8000`. The current frontend provides the
+responsive application shell, tool catalog, and API connectivity status;
+browser conversion workflows will be connected in subsequent frontend commits.
+
+Frontend quality checks run from `frontend/`:
+
+```bash
+npm run lint
+npm run test
+npm run build
+```
+
 ## Web API
 
 After installing the optional web dependencies, start the local API server with:
@@ -313,13 +343,15 @@ Repository layout:
 ```text
 src/docuforge/       Application source
 tests/               Automated tests
+frontend/            React browser application
 .github/workflows/   Continuous integration workflows
 ```
 
 ## Current Limitations
 
-- The graphical browser interface, authentication, persistent cloud storage,
-  background jobs, OCR, and office-document conversion are not implemented.
+- The browser application currently provides its shell and tool catalog; file
+  conversion forms are not connected yet. Authentication, persistent cloud
+  storage, background jobs, OCR, and office-document conversion are not implemented.
 - Page ranges and comma-separated page lists are not supported.
 - Every CLI operation requires an explicit output file or output directory;
   in-place PDF modification is not supported.
