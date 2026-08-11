@@ -87,6 +87,7 @@ export function createApiClient(
       return {
         blob: await response.blob(),
         contentType: response.headers.get('content-type'),
+        contentDisposition: response.headers.get('content-disposition'),
       }
     },
   }

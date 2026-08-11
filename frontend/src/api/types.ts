@@ -18,4 +18,5 @@ export interface ApiErrorPayload {
 export interface BinaryResponse {
   blob: Blob
   contentType: string | null
+  contentDisposition: string | null
 }

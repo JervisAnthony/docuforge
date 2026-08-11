@@ -91,7 +91,10 @@ describe('API client', () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response('document', {
         status: 200,
-        headers: { 'Content-Type': 'application/pdf' },
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': 'attachment; filename="result.pdf"',
+        },
       }),
     )
     const formData = new FormData()
@@ -102,7 +105,10 @@ describe('API client', () => {
         '/api/v1/pdf/split',
         formData,
       ),
-    ).resolves.toMatchObject({ contentType: 'application/pdf' })
+    ).resolves.toMatchObject({
+      contentType: 'application/pdf',
+      contentDisposition: 'attachment; filename="result.pdf"',
+    })
 
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.example.test/api/v1/pdf/split',
