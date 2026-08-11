@@ -278,10 +278,14 @@ npm run dev
 ```
 
 Open the local URL printed by Vite. During development, Vite proxies `/api` to
-the FastAPI server at `127.0.0.1:8000`. The browser application supports PDF
-merge, split, rotation, page removal, page extraction, and PDF-to-images
-workflows. Image browser workflows will be connected in the next frontend
-commit.
+the FastAPI server at `127.0.0.1:8000`. The browser application supports all ten
+current tools: PDF merge, split, rotation, page removal, page extraction, and
+PDF-to-images; plus image conversion, resizing, compression, and images-to-PDF.
+
+Image conversion lets you choose the output format. Resizing accepts a width,
+height, or both while preserving aspect ratio and leaving upscaling off by
+default. Compression supports JPEG/WebP quality or a maximum file size. For
+images-to-PDF, pages follow the displayed image order.
 
 Frontend quality checks run from `frontend/`:
 
@@ -350,9 +354,8 @@ frontend/            React browser application
 
 ## Current Limitations
 
-- Image conversion forms are not connected in the browser yet. Authentication,
-  persistent cloud storage, background jobs, OCR, and office-document conversion
-  are not implemented.
+- Authentication, persistent cloud storage, background jobs, OCR, and
+  office-document conversion are not implemented.
 - Page-range syntax is not supported; browser page selections use comma-separated
   positive page numbers.
 - Every CLI operation requires an explicit output file or output directory;

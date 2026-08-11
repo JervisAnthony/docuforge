@@ -1,8 +1,8 @@
-import type { PdfToolId, ToolDefinition } from '../tools/types'
+import type { ToolDefinition, ToolId } from '../tools/types'
 
 interface ToolCardProps {
   tool: ToolDefinition
-  onOpen?: (toolId: PdfToolId) => void
+  onOpen?: (toolId: ToolId) => void
 }
 
 export function ToolCard({ tool, onOpen }: ToolCardProps) {
@@ -32,7 +32,7 @@ export function ToolCard({ tool, onOpen }: ToolCardProps) {
         </div>
       ) : (
         <p className="tool-card__status">
-          <span aria-hidden="true">●</span> Backend ready · Interface coming next
+          <span aria-hidden="true">●</span> Backend available · Browser workflow unavailable
         </p>
       )}
     </article>

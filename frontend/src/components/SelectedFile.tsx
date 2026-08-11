@@ -1,4 +1,4 @@
-import { formatFileSize } from '../pdf/fileUtils'
+import { formatFileSize } from '../utils/files'
 
 interface SelectedFileProps {
   file: File

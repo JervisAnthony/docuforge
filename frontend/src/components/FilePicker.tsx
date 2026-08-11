@@ -10,6 +10,7 @@ interface FilePickerProps {
   disabled?: boolean
   error?: string | null
   helpText?: string
+  accept?: string
 }
 
 export function FilePicker({
@@ -21,6 +22,7 @@ export function FilePicker({
   disabled = false,
   error = null,
   helpText,
+  accept = '.pdf,application/pdf',
 }: FilePickerProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const descriptionId = `${id}-description`
@@ -47,7 +49,7 @@ export function FilePicker({
         ref={inputRef}
         id={id}
         type="file"
-        accept=".pdf,application/pdf"
+        accept={accept}
         multiple={multiple}
         disabled={disabled}
         aria-invalid={error ? 'true' : undefined}

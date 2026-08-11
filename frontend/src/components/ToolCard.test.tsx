@@ -17,7 +17,7 @@ const imageTool = {
   title: 'Convert image',
   description: 'Convert image formats.',
   endpoint: '/api/v1/images/convert',
-  interfaceStatus: 'backend-ready',
+  interfaceStatus: 'operational',
 } as const
 
 describe('ToolCard', () => {
@@ -31,11 +31,11 @@ describe('ToolCard', () => {
     expect(article).not.toHaveTextContent('/api/v1/pdf/merge')
   })
 
-  it('keeps an image tool truthful and non-operational', () => {
-    render(<ToolCard tool={imageTool} />)
+  it('exposes a real action for an operational image tool', () => {
+    render(<ToolCard tool={imageTool} onOpen={() => undefined} />)
     const article = screen.getByRole('article')
-    expect(article).toHaveTextContent('Backend ready · Interface coming next')
-    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(article).toHaveTextContent('Ready')
+    expect(screen.getByRole('button', { name: 'Open Convert image' })).toBeEnabled()
     expect(article).not.toHaveTextContent('/api/v1/images/convert')
   })
 })
