@@ -295,6 +295,16 @@ npm run test
 npm run build
 ```
 
+From a valid DocuForge Python environment, the full-stack browser suite requires
+Chromium once per Playwright installation. It starts both Uvicorn and Vite
+automatically and exercises the real API through the Vite proxy:
+
+```bash
+cd frontend
+npx playwright install chromium
+npm run test:e2e
+```
+
 ## Web API
 
 After installing the optional web dependencies, start the local API server with:
