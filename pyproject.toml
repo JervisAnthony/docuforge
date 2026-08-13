@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docuforge"
-version = "0.1.0.dev0"
-description = "A modular document conversion toolkit."
+version = "0.1.0"
+description = "Private-by-design PDF and image tools for web, CLI, and Python."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -17,7 +17,7 @@ authors = [
 ]
 
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
