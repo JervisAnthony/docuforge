@@ -30,11 +30,28 @@ def test_configured_cors_allows_known_frontend_origin() -> None:
         headers={
             "Origin": "https://app.example.com",
             "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "X-Request-ID",
         },
     )
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "https://app.example.com"
+    assert "X-Request-ID" in response.headers["access-control-allow-headers"]
+
+
+def test_configured_cors_exposes_request_id_to_known_frontend_origin() -> None:
+    application = create_app(
+        ApiSettings(cors_allowed_origins=("https://app.example.com",))
+    )
+    response = TestClient(application).get(
+        "/api/v1/health",
+        headers={"Origin": "https://app.example.com"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://app.example.com"
+    assert response.headers["access-control-expose-headers"] == "X-Request-ID"
+    assert response.headers["x-request-id"]
 
 
 def test_unconfigured_origin_is_not_reflected() -> None:
