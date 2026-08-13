@@ -1,0 +1,48 @@
+name: Production Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      frontend_url:
+        description: Public Vercel frontend origin
+        required: true
+        type: string
+      api_url:
+        description: Public Railway API origin
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-smoke
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify deployed MVP1
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DOCUFORGE_FRONTEND_URL: ${{ inputs.frontend_url }}
+      DOCUFORGE_API_URL: ${{ inputs.api_url }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install DocuForge
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Verify public deployment
+        run: >-
+          python -m docuforge.ops.deployment_smoke
+          --frontend-url "$DOCUFORGE_FRONTEND_URL"
+          --api-url "$DOCUFORGE_API_URL"
+          --timeout 20
