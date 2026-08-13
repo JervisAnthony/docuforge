@@ -1,6 +1,7 @@
 """FastAPI application construction for the DocuForge HTTP adapter."""
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from docuforge.api.config import ApiSettings
 from docuforge.api.errors import register_error_handlers
@@ -21,9 +22,16 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
         redoc_url=redoc_url,
         openapi_url=openapi_url,
     )
+    if resolved_settings.cors_allowed_origins:
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(resolved_settings.cors_allowed_origins),
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Accept", "Content-Type"],
+        )
     register_error_handlers(application)
     application.include_router(create_api_router(resolved_settings))
     return application
 
 
-app = create_app()
+app = create_app(ApiSettings.from_environment())
