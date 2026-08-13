@@ -1,7 +1,7 @@
 """Configuration for constructing a DocuForge API application."""
 
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 
 from docuforge.version import package_version
 
