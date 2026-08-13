@@ -21,6 +21,14 @@ class HealthResponse(BaseModel):
     version: str
 
 
+class ReadinessResponse(BaseModel):
+    """Readiness response confirming the API can accept work."""
+
+    status: Literal["ready"]
+    service: Literal["docuforge"]
+    version: str
+
+
 class ApiErrorResponse(BaseModel):
     """Stable response returned for errors explicitly translated by the API."""
 
