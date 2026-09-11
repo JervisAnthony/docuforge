@@ -12,6 +12,8 @@ class DocumentFormat(str, Enum):
 
     PDF = "pdf"
     DOCX = "docx"
+    PPTX = "pptx"
+    XLSX = "xlsx"
     JPG = "jpg"
     PNG = "png"
     GIF = "gif"
