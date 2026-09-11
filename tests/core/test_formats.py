@@ -10,6 +10,8 @@ from docuforge.core import DocumentFormat, InvalidFormatError
     [
         ("pdf", DocumentFormat.PDF),
         ("docx", DocumentFormat.DOCX),
+        ("pptx", DocumentFormat.PPTX),
+        ("xlsx", DocumentFormat.XLSX),
         ("jpg", DocumentFormat.JPG),
         ("png", DocumentFormat.PNG),
         ("gif", DocumentFormat.GIF),
