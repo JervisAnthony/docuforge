@@ -3,7 +3,12 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from docuforge.core import DocumentFormat, InvalidConversionRequestError
+from docuforge.core import (
+    ConversionOperation,
+    ConversionRequest,
+    DocumentFormat,
+    InvalidConversionRequestError,
+)
 
 SUPPORTED_OFFICE_SOURCE_FORMATS = frozenset(
     {
@@ -12,6 +17,27 @@ SUPPORTED_OFFICE_SOURCE_FORMATS = frozenset(
         DocumentFormat.XLSX,
     }
 )
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class DocxToPdfRequest(ConversionRequest):
+    """An immutable request to convert one DOCX to one exact PDF path."""
+
+    def __init__(self, input_path: Path, output_path: Path) -> None:
+        """Initialize the intrinsic DOCX-to-PDF conversion identity."""
+        ConversionRequest.__init__(
+            self,
+            input_paths=(Path(input_path),),
+            output_path=Path(output_path),
+            source_format=DocumentFormat.DOCX,
+            target_format=DocumentFormat.PDF,
+            operation=ConversionOperation.CONVERT,
+        )
+
+    @property
+    def input_path(self) -> Path:
+        """Return the request's single DOCX source path."""
+        return self.input_paths[0]
 
 
 def _validate_path(value: Path, *, field_name: str) -> None:

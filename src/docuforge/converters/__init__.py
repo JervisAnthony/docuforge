@@ -18,6 +18,11 @@ from docuforge.converters.image import (
     convert_images_to_pdf,
     resize_image_path,
 )
+from docuforge.converters.office import (
+    DocxToPdfConverter,
+    DocxToPdfRequest,
+    convert_docx_to_pdf,
+)
 from docuforge.converters.pdf import (
     PageGroup,
     PageRotation,
@@ -49,6 +54,8 @@ from docuforge.converters.pdf import (
 )
 
 __all__ = [
+    "DocxToPdfConverter",
+    "DocxToPdfRequest",
     "ImageCompressPathRequest",
     "ImageCompressPathResult",
     "ImageConvertPathRequest",
@@ -84,6 +91,7 @@ __all__ = [
     "PdfToImagesPathRequest",
     "PdfToImagesPathResult",
     "compress_image_path",
+    "convert_docx_to_pdf",
     "convert_image_path",
     "convert_images_to_pdf",
     "extract_pdf_pages",
