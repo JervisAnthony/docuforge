@@ -27,8 +27,11 @@ Every invocation creates a unique temporary LibreOffice user profile and supplie
 URI through `-env:UserInstallation`. The profile is removed after success or failure. This avoids a
 shared profile lock without introducing application or distributed locking.
 
-Success requires more than a zero process exit code: the expected output must exist, be a regular
-non-empty file, and begin with the PDF signature `%PDF-`.
+LibreOffice writes into a unique staging directory inside the requested output directory. Success
+requires more than a zero process exit code: the staged output must exist, be a regular non-empty
+file, and begin with the PDF signature `%PDF-`. Only then is it atomically promoted to the final
+path. A pre-existing destination is never treated as evidence from the current invocation and is
+replaced only after the newly staged PDF passes validation.
 
 ## Deployment status and progression
 

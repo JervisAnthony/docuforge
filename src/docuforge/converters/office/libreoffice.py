@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -79,21 +80,44 @@ class LibreOfficeEngine:
             raise TypeError("request must be an OfficeConversionRequest")
 
         source_format = _validate_request(request)
-        output_path = request.output_directory / f"{request.input_path.stem}.pdf"
+        final_output_path = request.output_directory / f"{request.input_path.stem}.pdf"
 
-        with tempfile.TemporaryDirectory(prefix="docuforge-libreoffice-") as profile_directory:
-            profile_path = Path(profile_directory)
-            args = _conversion_arguments(
-                executable=self._executable,
-                request=request,
-                profile_path=profile_path,
-            )
-            self._run_process(args)
+        try:
+            with (
+                tempfile.TemporaryDirectory(
+                    prefix=".docuforge-office-",
+                    dir=request.output_directory,
+                ) as staging_directory,
+                tempfile.TemporaryDirectory(
+                    prefix="docuforge-libreoffice-"
+                ) as profile_directory,
+            ):
+                staging_path = Path(staging_directory)
+                staged_output_path = staging_path / f"{request.input_path.stem}.pdf"
+                args = _conversion_arguments(
+                    executable=self._executable,
+                    request=request,
+                    output_directory=staging_path,
+                    profile_path=Path(profile_directory),
+                )
+                self._run_process(args)
+                _validate_pdf_output(staged_output_path)
+                try:
+                    os.replace(staged_output_path, final_output_path)
+                except OSError as error:
+                    raise OfficeConversionError(
+                        "Unable to publish the Office conversion output."
+                    ) from error
+        except OfficeConversionError:
+            raise
+        except OSError as error:
+            raise OfficeConversionError(
+                "Unable to create or clean up the Office conversion workspace."
+            ) from error
 
-        _validate_pdf_output(output_path)
         return OfficeConversionResult(
             input_path=request.input_path,
-            output_path=output_path,
+            output_path=final_output_path,
             source_format=source_format,
         )
 
@@ -164,6 +188,7 @@ def _conversion_arguments(
     *,
     executable: str,
     request: OfficeConversionRequest,
+    output_directory: Path,
     profile_path: Path,
 ) -> tuple[str, ...]:
     return (
@@ -175,7 +200,7 @@ def _conversion_arguments(
         "--convert-to",
         "pdf",
         "--outdir",
-        str(request.output_directory),
+        str(output_directory),
         str(request.input_path),
     )
 

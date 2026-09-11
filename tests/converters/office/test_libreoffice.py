@@ -11,6 +11,7 @@ from urllib.request import url2pathname
 
 import pytest
 
+import docuforge.converters.office.libreoffice as libreoffice_module
 from docuforge.converters.office import (
     LibreOfficeEngine,
     OfficeConversionError,
@@ -50,6 +51,7 @@ class RecordingRunner:
         self.stderr = stderr
         self.calls: list[tuple[tuple[str, ...], dict[str, Any]]] = []
         self.profile_paths: list[Path] = []
+        self.output_directories: list[Path] = []
 
     def __call__(self, args: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         command = tuple(args)
@@ -60,11 +62,13 @@ class RecordingRunner:
         profile_path = file_uri_to_path(profile_argument.split("=", 1)[1])
         self.profile_paths.append(profile_path)
         assert profile_path.is_dir()
+        output_directory = Path(command[command.index("--outdir") + 1])
+        self.output_directories.append(output_directory)
+        assert output_directory.is_dir()
 
         if self.error is not None:
             raise self.error
         if self.output_bytes is not None:
-            output_directory = Path(command[command.index("--outdir") + 1])
             input_path = Path(command[-1])
             output_path = output_directory / f"{input_path.stem}.pdf"
             if self.output_is_directory:
@@ -211,7 +215,10 @@ def test_command_uses_safe_headless_arguments_and_preserves_complex_paths(tmp_pa
     assert command[0] == str(executable)
     assert "--headless" in command
     assert command[command.index("--convert-to") + 1] == "pdf"
-    assert command[command.index("--outdir") + 1] == str(output_directory)
+    staging_directory = Path(command[command.index("--outdir") + 1])
+    assert staging_directory != output_directory
+    assert staging_directory.parent == output_directory
+    assert staging_directory.name.startswith(".docuforge-office-")
     assert command[-1] == str(input_path)
     assert options == {
         "check": False,
@@ -225,16 +232,21 @@ def test_command_uses_safe_headless_arguments_and_preserves_complex_paths(tmp_pa
 def test_non_zero_exit_and_launch_failure_are_safe_errors(tmp_path: Path) -> None:
     secret = "private stderr details"
     request = make_request(tmp_path)
+    final_output = request.output_directory / "source.pdf"
+    stale_bytes = b"%PDF-1.7\nstale content"
+    final_output.write_bytes(stale_bytes)
     non_zero_runner = RecordingRunner(returncode=2, stderr=secret)
 
     with pytest.raises(OfficeEngineExecutionError) as non_zero:
         make_engine(tmp_path, non_zero_runner).convert_to_pdf(request)
     assert secret not in str(non_zero.value)
+    assert final_output.read_bytes() == stale_bytes
 
     launch_runner = RecordingRunner(error=OSError(secret))
     with pytest.raises(OfficeEngineExecutionError) as launch:
         make_engine(tmp_path, launch_runner).convert_to_pdf(request)
     assert secret not in str(launch.value)
+    assert final_output.read_bytes() == stale_bytes
 
 
 def test_timeout_uses_configured_limit_and_does_not_leak_details(tmp_path: Path) -> None:
@@ -242,6 +254,9 @@ def test_timeout_uses_configured_limit_and_does_not_leak_details(tmp_path: Path)
     timeout = subprocess.TimeoutExpired("soffice", 12, stderr=secret)
     runner = RecordingRunner(error=timeout)
     request = make_request(tmp_path)
+    final_output = request.output_directory / "source.pdf"
+    stale_bytes = b"%PDF-1.7\nstale content"
+    final_output.write_bytes(stale_bytes)
     engine = LibreOfficeEngine(
         executable=make_executable(tmp_path),
         timeout_seconds=12,
@@ -253,6 +268,7 @@ def test_timeout_uses_configured_limit_and_does_not_leak_details(tmp_path: Path)
 
     assert runner.calls[0][1]["timeout"] == 12.0
     assert secret not in str(raised.value)
+    assert final_output.read_bytes() == stale_bytes
 
 
 @pytest.mark.parametrize(
@@ -283,6 +299,83 @@ def test_directory_output_is_rejected(tmp_path: Path) -> None:
         make_engine(tmp_path, runner).convert_to_pdf(request)
 
 
+def test_successful_staged_output_is_atomically_published(tmp_path: Path) -> None:
+    new_bytes = b"%PDF-1.7\nnew conversion"
+    runner = RecordingRunner(output_bytes=new_bytes)
+    request = make_request(tmp_path)
+
+    result = make_engine(tmp_path, runner).convert_to_pdf(request)
+
+    final_output = request.output_directory / "source.pdf"
+    assert result.output_path == final_output
+    assert final_output.read_bytes() == new_bytes
+    assert len(runner.output_directories) == 1
+    assert not runner.output_directories[0].exists()
+
+
+def test_successful_conversion_replaces_an_existing_destination(tmp_path: Path) -> None:
+    runner = RecordingRunner(output_bytes=b"%PDF-1.7\nnew content")
+    request = make_request(tmp_path)
+    final_output = request.output_directory / "source.pdf"
+    final_output.write_bytes(b"%PDF-1.7\nstale content")
+
+    make_engine(tmp_path, runner).convert_to_pdf(request)
+
+    assert final_output.read_bytes() == b"%PDF-1.7\nnew content"
+
+
+def test_preexisting_valid_pdf_cannot_mask_missing_staged_output(tmp_path: Path) -> None:
+    runner = RecordingRunner(output_bytes=None)
+    request = make_request(tmp_path)
+    final_output = request.output_directory / "source.pdf"
+    stale_bytes = b"%PDF-1.7\nstale content"
+    final_output.write_bytes(stale_bytes)
+
+    with pytest.raises(OfficeConversionError, match="did not produce"):
+        make_engine(tmp_path, runner).convert_to_pdf(request)
+
+    assert final_output.read_bytes() == stale_bytes
+    assert not runner.output_directories[0].exists()
+
+
+def test_invalid_staged_pdf_does_not_replace_an_existing_destination(tmp_path: Path) -> None:
+    runner = RecordingRunner(output_bytes=b"not a PDF")
+    request = make_request(tmp_path)
+    final_output = request.output_directory / "source.pdf"
+    stale_bytes = b"%PDF-1.7\nstale content"
+    final_output.write_bytes(stale_bytes)
+
+    with pytest.raises(OfficeConversionError, match="invalid"):
+        make_engine(tmp_path, runner).convert_to_pdf(request)
+
+    assert final_output.read_bytes() == stale_bytes
+    assert not runner.output_directories[0].exists()
+
+
+def test_promotion_failure_preserves_destination_and_cleans_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "private promotion details"
+    runner = RecordingRunner(output_bytes=b"%PDF-1.7\nnew content")
+    request = make_request(tmp_path)
+    final_output = request.output_directory / "source.pdf"
+    stale_bytes = b"%PDF-1.7\nstale content"
+    final_output.write_bytes(stale_bytes)
+
+    def fail_promotion(source: Path, destination: Path) -> None:
+        raise OSError(secret)
+
+    monkeypatch.setattr(libreoffice_module.os, "replace", fail_promotion)
+
+    with pytest.raises(OfficeConversionError) as raised:
+        make_engine(tmp_path, runner).convert_to_pdf(request)
+
+    assert secret not in str(raised.value)
+    assert final_output.read_bytes() == stale_bytes
+    assert not runner.output_directories[0].exists()
+
+
 def test_each_conversion_uses_a_distinct_profile_and_cleans_it_up(tmp_path: Path) -> None:
     runner = RecordingRunner()
     executable = make_executable(tmp_path)
@@ -295,6 +388,8 @@ def test_each_conversion_uses_a_distinct_profile_and_cleans_it_up(tmp_path: Path
 
     assert runner.profile_paths[0] != runner.profile_paths[1]
     assert all(not profile_path.exists() for profile_path in runner.profile_paths)
+    assert runner.output_directories[0] != runner.output_directories[1]
+    assert all(not output_directory.exists() for output_directory in runner.output_directories)
 
 
 def test_profile_is_cleaned_up_after_process_failure(tmp_path: Path) -> None:
@@ -306,6 +401,7 @@ def test_profile_is_cleaned_up_after_process_failure(tmp_path: Path) -> None:
 
     assert len(runner.profile_paths) == 1
     assert not runner.profile_paths[0].exists()
+    assert not runner.output_directories[0].exists()
 
 
 def test_timeout_must_be_positive(tmp_path: Path) -> None:
