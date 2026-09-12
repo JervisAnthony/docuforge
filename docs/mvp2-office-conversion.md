@@ -18,12 +18,15 @@ conversion-fidelity claim is made.
 `DocxToPdfRequest` represents exactly one DOCX source and one exact PDF destination.
 `DocxToPdfConverter` implements the standard converter contract and depends on an injected
 `OfficeConversionEngine`; it does not select or instantiate LibreOffice itself. Custom destination
-filenames are supported.
+filenames are supported. Before rendering, the workflow performs lightweight DOCX authenticity
+checking by requiring a readable OOXML ZIP package containing `[Content_Types].xml` and
+`word/document.xml`.
 
 Rendering occurs in an isolated workflow workspace inside the destination directory. The workflow
 checks that the engine result matches the requested input and DOCX-to-PDF identity, and that its
 artifact resolves inside that workspace. Only a valid result is atomically published to the exact
-requested output path. Existing output remains untouched when rendering or validation fails.
+requested output path. Symlink and non-regular engine artifacts are rejected before publication.
+Existing output remains untouched when rendering or validation fails.
 
 ## Process model
 

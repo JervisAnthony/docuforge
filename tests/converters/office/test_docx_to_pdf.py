@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import zipfile
 from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -63,8 +64,19 @@ def make_request(
     output_name: str = "result.pdf",
 ) -> DocxToPdfRequest:
     input_path = tmp_path / input_name
-    input_path.write_bytes(b"DOCX fixture")
+    write_minimal_docx(input_path)
     return DocxToPdfRequest(input_path, tmp_path / output_name)
+
+
+def write_minimal_docx(
+    path: Path,
+    *,
+    members: tuple[str, ...] = ("[Content_Types].xml", "word/document.xml"),
+) -> None:
+    """Write the smallest OOXML-like ZIP package needed by workflow tests."""
+    with zipfile.ZipFile(path, "w") as archive:
+        for member in members:
+            archive.writestr(member, "<xml />")
 
 
 def mutate_result(result: OfficeConversionResult, field: str, value: object) -> object:
@@ -144,6 +156,55 @@ def test_uppercase_docx_and_pdf_suffixes_are_accepted(tmp_path: Path) -> None:
     request = make_request(tmp_path, input_name="SOURCE.DOCX", output_name="RESULT.PDF")
 
     assert DocxToPdfConverter(FakeOfficeEngine()).convert(request) == request.output_path
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"plain text renamed as a Word document",
+        bytes(range(32)),
+        b"PK\x03\x04corrupt ZIP content",
+    ],
+    ids=["plain-text", "arbitrary-binary", "corrupt-zip"],
+)
+def test_renamed_non_docx_content_is_rejected_before_engine_call(
+    tmp_path: Path,
+    payload: bytes,
+) -> None:
+    input_path = tmp_path / "renamed.docx"
+    input_path.write_bytes(payload)
+    engine = FakeOfficeEngine()
+
+    with pytest.raises(InvalidConversionRequestError, match="valid DOCX"):
+        DocxToPdfConverter(engine).convert(
+            DocxToPdfRequest(input_path, tmp_path / "result.pdf")
+        )
+
+    assert engine.calls == []
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        ("word/document.xml",),
+        ("[Content_Types].xml",),
+    ],
+    ids=["missing-content-types", "missing-word-document"],
+)
+def test_incomplete_docx_package_is_rejected_before_engine_call(
+    tmp_path: Path,
+    members: tuple[str, ...],
+) -> None:
+    input_path = tmp_path / "incomplete.docx"
+    write_minimal_docx(input_path, members=members)
+    engine = FakeOfficeEngine()
+
+    with pytest.raises(InvalidConversionRequestError, match="valid DOCX"):
+        DocxToPdfConverter(engine).convert(
+            DocxToPdfRequest(input_path, tmp_path / "result.pdf")
+        )
+
+    assert engine.calls == []
 
 
 def test_missing_source_is_rejected_before_engine_call(tmp_path: Path) -> None:
@@ -346,8 +407,38 @@ def test_symlink_to_output_outside_workspace_is_rejected(tmp_path: Path) -> None
             pytest.skip("file symlinks are unavailable")
         return engine_result(engine_request, output_path=link)
 
-    with pytest.raises(OfficeConversionError, match="outside"):
+    with pytest.raises(OfficeConversionError, match="invalid PDF artifact"):
         DocxToPdfConverter(FakeOfficeEngine(symlink_result)).convert(request)
+
+
+def test_in_workspace_symlink_artifact_is_rejected_and_destination_preserved(
+    tmp_path: Path,
+) -> None:
+    request = make_request(tmp_path)
+    existing = b"%PDF-1.7\nexisting"
+    request.output_path.write_bytes(existing)
+
+    def symlink_result(engine_request: OfficeConversionRequest) -> OfficeConversionResult:
+        real_output = engine_request.output_directory / "real.pdf"
+        real_output.write_bytes(b"%PDF-1.7\nnew output")
+        linked_output = engine_request.output_directory / "linked.pdf"
+        try:
+            linked_output.symlink_to(real_output)
+        except OSError:
+            pytest.skip("file symlinks are unavailable")
+        return OfficeConversionResult(
+            input_path=engine_request.input_path,
+            output_path=linked_output,
+            source_format=DocumentFormat.DOCX,
+        )
+
+    engine = FakeOfficeEngine(symlink_result)
+    with pytest.raises(OfficeConversionError, match="invalid PDF artifact"):
+        DocxToPdfConverter(engine).convert(request)
+
+    assert not request.output_path.is_symlink()
+    assert request.output_path.read_bytes() == existing
+    assert not engine.workspaces[0].exists()
 
 
 def test_missing_engine_artifact_is_rejected(tmp_path: Path) -> None:
@@ -376,7 +467,7 @@ def test_engine_directory_artifact_is_rejected(tmp_path: Path) -> None:
             source_format=DocumentFormat.DOCX,
         )
 
-    with pytest.raises(OfficeConversionError, match="usable PDF"):
+    with pytest.raises(OfficeConversionError, match="invalid PDF artifact"):
         DocxToPdfConverter(FakeOfficeEngine(directory)).convert(request)
 
 

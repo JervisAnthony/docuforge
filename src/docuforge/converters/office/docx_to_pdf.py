@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import stat
 import tempfile
+import zipfile
 from pathlib import Path
 
 from docuforge.converters.office.engine import OfficeConversionEngine
@@ -21,6 +23,8 @@ from docuforge.core import (
     InvalidConversionRequestError,
     UnsupportedConversionError,
 )
+
+_REQUIRED_DOCX_MEMBERS = frozenset({"[Content_Types].xml", "word/document.xml"})
 
 
 class DocxToPdfConverter(Converter):
@@ -102,6 +106,7 @@ class DocxToPdfConverter(Converter):
             raise InvalidConversionRequestError("The DOCX input file does not exist.")
         if not request.input_path.is_file():
             raise InvalidConversionRequestError("The DOCX input path is not a file.")
+        _validate_docx_package(request.input_path)
 
         output_parent = request.output_path.parent
         if not output_parent.exists() or not output_parent.is_dir():
@@ -151,8 +156,14 @@ def _validate_engine_result(
         ) from error
     if result_input != requested_input:
         raise OfficeConversionError("The Office engine returned an inconsistent input path.")
-    if not result.output_path.exists() or not result.output_path.is_file():
-        raise OfficeConversionError("The Office engine did not produce a usable PDF artifact.")
+    try:
+        artifact_mode = result.output_path.lstat().st_mode
+    except OSError as error:
+        raise OfficeConversionError(
+            "The Office engine did not produce a usable PDF artifact."
+        ) from error
+    if stat.S_ISLNK(artifact_mode) or not stat.S_ISREG(artifact_mode):
+        raise OfficeConversionError("The Office engine returned an invalid PDF artifact.")
     try:
         resolved_workspace = workspace.resolve(strict=True)
         resolved_output = result.output_path.resolve(strict=True)
@@ -162,6 +173,19 @@ def _validate_engine_result(
             "The Office engine returned an output outside the conversion workspace."
         ) from error
     return result.output_path
+
+
+def _validate_docx_package(path: Path) -> None:
+    """Require the minimal ZIP package structure that identifies an OOXML Word file."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = frozenset(archive.namelist())
+    except (OSError, zipfile.BadZipFile, zipfile.LargeZipFile) as error:
+        raise InvalidConversionRequestError(
+            "Input file is not a valid DOCX document."
+        ) from error
+    if not _REQUIRED_DOCX_MEMBERS.issubset(members):
+        raise InvalidConversionRequestError("Input file is not a valid DOCX document.")
 
 
 def convert_docx_to_pdf(
