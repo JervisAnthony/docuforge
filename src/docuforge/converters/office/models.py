@@ -40,6 +40,26 @@ class DocxToPdfRequest(ConversionRequest):
         return self.input_paths[0]
 
 
+@dataclass(frozen=True, slots=True, init=False)
+class PptxToPdfRequest(ConversionRequest):
+    """An immutable request to convert one PPTX to one exact PDF path."""
+
+    def __init__(self, input_path: Path, output_path: Path) -> None:
+        ConversionRequest.__init__(
+            self,
+            input_paths=(Path(input_path),),
+            output_path=Path(output_path),
+            source_format=DocumentFormat.PPTX,
+            target_format=DocumentFormat.PDF,
+            operation=ConversionOperation.CONVERT,
+        )
+
+    @property
+    def input_path(self) -> Path:
+        """Return the request's single PPTX source path."""
+        return self.input_paths[0]
+
+
 def _validate_path(value: Path, *, field_name: str) -> None:
     if not isinstance(value, Path):
         raise TypeError(f"{field_name} must be a Path object")
