@@ -1,6 +1,6 @@
 # DocuForge
 
-DocuForge is a privacy-conscious PDF and image toolkit with a browser application, FastAPI service, command-line interface, and reusable Python conversion layer.
+DocuForge is a privacy-conscious PDF, image, and Office toolkit with a browser application, FastAPI service, command-line interface, and reusable Python conversion layer.
 
 The MVP is intentionally focused: process common document and image tasks without accounts, persistent document storage, or browser-side document parsing.
 
@@ -204,11 +204,14 @@ The following are intentionally outside the MVP1 scope:
 - persistent cloud document storage
 - background job infrastructure
 - OCR
-- office-document conversion
 - password input for encrypted PDFs
 - in-place PDF modification
 
 These are future product decisions, not missing requirements for the current ten-tool MVP.
+
+MVP2 adds browser and API workflows for DOCX, PPTX, and XLSX to PDF. Their server-side Office
+rendering engine is optional at startup and is not yet guaranteed in production; requests return a
+safe availability error when it is missing.
 
 ## Feedback
 

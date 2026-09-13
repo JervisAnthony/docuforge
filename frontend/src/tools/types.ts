@@ -1,4 +1,4 @@
-export type ToolCategory = 'pdf' | 'image'
+export type ToolCategory = 'pdf' | 'image' | 'office'
 export type PdfToolId =
   | 'pdf-merge'
   | 'pdf-split'
@@ -11,7 +11,8 @@ export type ImageToolId =
   | 'image-resize'
   | 'image-compress'
   | 'images-to-pdf'
-export type ToolId = PdfToolId | ImageToolId
+export type OfficeToolId = 'office-docx-to-pdf' | 'office-pptx-to-pdf' | 'office-xlsx-to-pdf'
+export type ToolId = PdfToolId | ImageToolId | OfficeToolId
 export type ToolInterfaceStatus = 'operational' | 'backend-ready'
 
 interface ToolMetadata {
@@ -32,13 +33,21 @@ export interface ImageToolDefinition extends ToolMetadata {
   interfaceStatus: 'operational'
 }
 
+export interface OfficeToolDefinition extends ToolMetadata {
+  id: OfficeToolId
+  category: 'office'
+  interfaceStatus: 'operational'
+}
+
 export type BackendReadyToolDefinition = ToolMetadata &
   (
     | { id: PdfToolId; category: 'pdf'; interfaceStatus: 'backend-ready' }
     | { id: ImageToolId; category: 'image'; interfaceStatus: 'backend-ready' }
+    | { id: OfficeToolId; category: 'office'; interfaceStatus: 'backend-ready' }
   )
 
 export type ToolDefinition =
   | PdfToolDefinition
   | ImageToolDefinition
+  | OfficeToolDefinition
   | BackendReadyToolDefinition

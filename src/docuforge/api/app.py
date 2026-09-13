@@ -6,10 +6,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from docuforge.api.config import ApiSettings
 from docuforge.api.errors import register_error_handlers
 from docuforge.api.observability import REQUEST_ID_HEADER, ProductionMiddleware
+from docuforge.api.office import OfficeEngineFactory
 from docuforge.api.routes import create_api_router
+from docuforge.converters.office import LibreOfficeEngine
 
 
-def create_app(settings: ApiSettings | None = None) -> FastAPI:
+def create_app(
+    settings: ApiSettings | None = None,
+    *,
+    office_engine_factory: OfficeEngineFactory = LibreOfficeEngine,
+) -> FastAPI:
     """Create a new, independently configured DocuForge API application."""
     resolved_settings = settings if settings is not None else ApiSettings()
     docs_url = "/docs" if resolved_settings.docs_enabled else None
@@ -36,7 +42,9 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
         environment=resolved_settings.environment,
     )
     register_error_handlers(application)
-    application.include_router(create_api_router(resolved_settings))
+    application.include_router(
+        create_api_router(resolved_settings, office_engine_factory=office_engine_factory)
+    )
     return application
 
 

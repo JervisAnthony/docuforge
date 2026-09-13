@@ -4,18 +4,21 @@ import { AppHeader } from './components/AppHeader'
 import { ToolSection } from './components/ToolSection'
 import { ImageToolWorkspace } from './image/ImageToolWorkspace'
 import type { ImageRequestClient } from './image/types'
+import { OfficeToolWorkspace } from './office/OfficeToolWorkspace'
 import { PdfToolWorkspace } from './pdf/PdfToolWorkspace'
 import type { PdfRequestClient } from './pdf/types'
 import { toolById, toolsForCategory } from './tools/catalog'
 import type { ToolId } from './tools/types'
+import type { MultipartRequestClient } from './workflows/useSubmission'
 
 interface AppProps {
   checkHealth?: () => Promise<ApiHealth>
   pdfClient?: PdfRequestClient
   imageClient?: ImageRequestClient
+  officeClient?: MultipartRequestClient
 }
 
-function App({ checkHealth, pdfClient, imageClient }: AppProps) {
+function App({ checkHealth, pdfClient, imageClient, officeClient }: AppProps) {
   const [selectedTool, setSelectedTool] = useState<ToolId | null>(null)
   const selectedDefinition = selectedTool ? toolById(selectedTool) : null
 
@@ -35,14 +38,20 @@ function App({ checkHealth, pdfClient, imageClient }: AppProps) {
             onBack={() => setSelectedTool(null)}
             client={imageClient}
           />
+        ) : selectedDefinition?.category === 'office' ? (
+          <OfficeToolWorkspace
+            toolId={selectedDefinition.id}
+            onBack={() => setSelectedTool(null)}
+            client={officeClient}
+          />
         ) : (
           <>
             <section className="intro" aria-labelledby="intro-heading">
               <p className="eyebrow">Document work, simplified</p>
               <h1 id="intro-heading">Choose the right tool for your file</h1>
               <p className="intro__copy">
-                DocuForge brings focused PDF and image utilities into one clear
-                workspace. All current PDF and image workflows are ready to use.
+                DocuForge brings focused PDF, image, and Office utilities into one clear
+                workspace. Office conversion requires an available server rendering engine.
               </p>
             </section>
 
@@ -57,6 +66,12 @@ function App({ checkHealth, pdfClient, imageClient }: AppProps) {
                 title="Image tools"
                 description="Prepare images for sharing, storage, and document workflows."
                 tools={toolsForCategory('image')}
+                onOpen={setSelectedTool}
+              />
+              <ToolSection
+                title="Office tools"
+                description="Convert Word documents, presentations, and workbooks to PDF when the server rendering engine is available."
+                tools={toolsForCategory('office')}
                 onOpen={setSelectedTool}
               />
             </div>

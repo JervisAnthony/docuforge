@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { toolCatalog, toolsForCategory } from './catalog'
 
 describe('tool catalog', () => {
-  it('contains the ten backend capabilities with unique IDs', () => {
-    expect(toolCatalog).toHaveLength(10)
-    expect(new Set(toolCatalog.map((tool) => tool.id)).size).toBe(10)
+  it('contains thirteen operational capabilities with unique IDs', () => {
+    expect(toolCatalog).toHaveLength(13)
+    expect(new Set(toolCatalog.map((tool) => tool.id)).size).toBe(13)
     expect(toolsForCategory('pdf').map((tool) => tool.title)).toEqual([
       'Merge PDF',
       'Split PDF',
@@ -18,6 +18,11 @@ describe('tool catalog', () => {
       'Resize image',
       'Compress image',
       'Images to PDF',
+    ])
+    expect(toolsForCategory('office').map((tool) => tool.title)).toEqual([
+      'Word to PDF',
+      'PowerPoint to PDF',
+      'Excel to PDF',
     ])
   })
 
@@ -33,6 +38,9 @@ describe('tool catalog', () => {
       '/api/v1/images/resize',
       '/api/v1/images/compress',
       '/api/v1/images/to-pdf',
+      '/api/v1/office/docx-to-pdf',
+      '/api/v1/office/pptx-to-pdf',
+      '/api/v1/office/xlsx-to-pdf',
     ])
     expect(toolCatalog.every((tool) => tool.interfaceStatus === 'operational')).toBe(true)
   })

@@ -26,6 +26,18 @@ describe('download utilities', () => {
     ).toBe('split pages.zip')
   })
 
+  it('prefers a safe UTF-8 extended filename from the server', () => {
+    expect(
+      filenameFromContentDisposition(
+        "attachment; filename=other.pdf; filename*=utf-8''r%C3%A9sum%C3%A9%20draft.pdf",
+        'fallback.pdf',
+      ),
+    ).toBe('résumé draft.pdf')
+    expect(
+      filenameFromContentDisposition("attachment; filename*=utf-8''%GG", 'fallback.pdf'),
+    ).toBe('fallback.pdf')
+  })
+
   it('sanitizes paths and rejects unsafe or blank filenames', () => {
     expect(sanitizeDownloadFilename('../private/report.pdf')).toBe('..privatereport.pdf')
     expect(sanitizeDownloadFilename('bad\u0000name.pdf')).toBeNull()

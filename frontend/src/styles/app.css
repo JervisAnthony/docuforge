@@ -198,6 +198,11 @@ main {
   color: var(--color-image);
 }
 
+.tool-card__icon--office {
+  background: var(--color-office-soft);
+  color: var(--color-office);
+}
+
 .tool-card h3 {
   margin-bottom: var(--space-2);
   font-size: 1.08rem;

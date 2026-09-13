@@ -75,15 +75,27 @@ replaced only after the newly staged PDF passes validation.
 
 ## Deployment status and progression
 
-LibreOffice is an external system dependency and is not yet guaranteed to be installed in the
-production container. No user-facing Office conversion is production-supported by this foundation.
+Commit 46 exposes the three core workflows through the browser and multipart FastAPI routes:
+
+- `POST /api/v1/office/docx-to-pdf`
+- `POST /api/v1/office/pptx-to-pdf`
+- `POST /api/v1/office/xlsx-to-pdf`
+
+Each route stores one upload in a request-scoped `RequestWorkspace`, invokes its core converter
+through a threadpool, and returns a PDF `FileResponse` with cleanup after transmission. The Office
+engine is resolved lazily only when an Office request runs. The API starts and its other routes
+remain healthy without LibreOffice; an unavailable engine produces a safe 503 response.
+
+LibreOffice remains an external runtime dependency and is not installed into production by this
+commit. Browser workflows exist, but production Office conversion has not been verified. No
+persistent user files, jobs, or queues are introduced.
+
 The progression is:
 
 1. Commit 42: Office engine foundation — complete.
 2. Commit 43: DOCX to PDF core workflow — complete.
 3. Commit 44: PPTX to PDF core workflow — complete.
-4. Commit 45: XLSX to PDF core workflow — complete/current.
-5. Commit 46: Office API and browser workflows.
+4. Commit 45: XLSX to PDF core workflow — complete.
+5. Commit 46: Office API and browser workflows — complete/current.
 
-LibreOffice remains an external dependency and is not guaranteed in the production container. No
-browser, API, CLI, or production Office workflow exists yet.
+There is no Office CLI workflow or guaranteed production Office runtime yet.
