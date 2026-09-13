@@ -21,7 +21,10 @@ from docuforge.converters.image import (
 from docuforge.converters.office import (
     DocxToPdfConverter,
     DocxToPdfRequest,
+    PptxToPdfConverter,
+    PptxToPdfRequest,
     convert_docx_to_pdf,
+    convert_pptx_to_pdf,
 )
 from docuforge.converters.pdf import (
     PageGroup,
@@ -90,10 +93,13 @@ __all__ = [
     "PdfSplitRequest",
     "PdfToImagesPathRequest",
     "PdfToImagesPathResult",
+    "PptxToPdfConverter",
+    "PptxToPdfRequest",
     "compress_image_path",
     "convert_docx_to_pdf",
     "convert_image_path",
     "convert_images_to_pdf",
+    "convert_pptx_to_pdf",
     "extract_pdf_pages",
     "pdf_to_images_path",
     "remove_pdf_pages",

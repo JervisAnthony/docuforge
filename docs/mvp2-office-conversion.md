@@ -9,9 +9,9 @@ conversion interface for the Open XML formats in this foundation:
 - PPTX to PDF
 - XLSX to PDF
 
-Commit 42 provides the low-level engine contract. Commit 43 adds the first concrete core workflow,
-DOCX to PDF, without FastAPI, CLI, frontend, jobs-package, or uploaded-file coupling. No
-conversion-fidelity claim is made.
+Commit 42 provides the low-level engine contract. Commits 43 and 44 add concrete DOCX-to-PDF
+and PPTX-to-PDF core workflows without FastAPI, CLI, frontend, jobs-package, or uploaded-file
+coupling. No conversion-fidelity claim is made.
 
 ## DOCX to PDF core workflow
 
@@ -27,6 +27,17 @@ checks that the engine result matches the requested input and DOCX-to-PDF identi
 artifact resolves inside that workspace. Only a valid result is atomically published to the exact
 requested output path. Symlink and non-regular engine artifacts are rejected before publication.
 Existing output remains untouched when rendering or validation fails.
+
+## PPTX to PDF core workflow
+
+`PptxToPdfRequest` fixes the conversion identity to one PPTX source and a caller-selected PDF
+destination. `PptxToPdfConverter` uses an injected `OfficeConversionEngine` and validates a readable
+OOXML ZIP package containing `[Content_Types].xml` and `ppt/presentation.xml` before invoking it.
+Rendering uses a unique workflow workspace in the destination directory. The workflow checks the
+engine result's PPTX-to-PDF identity, source path, regular-file artifact, and workspace provenance;
+symlinks are rejected. It then atomically publishes the artifact to the exact requested destination.
+The private workflow mechanics are shared with DOCX while each converter retains its own format
+policy.
 
 ## Process model
 
@@ -56,8 +67,8 @@ production container. No user-facing Office conversion is production-supported b
 The progression is:
 
 1. Commit 42: Office engine foundation — complete.
-2. Commit 43: DOCX to PDF core workflow — complete/current.
-3. Commit 44: PPTX to PDF core workflow.
+2. Commit 43: DOCX to PDF core workflow — complete.
+3. Commit 44: PPTX to PDF core workflow — complete/current.
 4. Commit 45: XLSX to PDF core workflow.
 5. Commit 46: Office API and browser workflows.
 
