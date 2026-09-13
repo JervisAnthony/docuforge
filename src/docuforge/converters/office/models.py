@@ -60,6 +60,26 @@ class PptxToPdfRequest(ConversionRequest):
         return self.input_paths[0]
 
 
+@dataclass(frozen=True, slots=True, init=False)
+class XlsxToPdfRequest(ConversionRequest):
+    """An immutable request to convert one XLSX to one exact PDF path."""
+
+    def __init__(self, input_path: Path, output_path: Path) -> None:
+        ConversionRequest.__init__(
+            self,
+            input_paths=(Path(input_path),),
+            output_path=Path(output_path),
+            source_format=DocumentFormat.XLSX,
+            target_format=DocumentFormat.PDF,
+            operation=ConversionOperation.CONVERT,
+        )
+
+    @property
+    def input_path(self) -> Path:
+        """Return the request's single XLSX source path."""
+        return self.input_paths[0]
+
+
 def _validate_path(value: Path, *, field_name: str) -> None:
     if not isinstance(value, Path):
         raise TypeError(f"{field_name} must be a Path object")
