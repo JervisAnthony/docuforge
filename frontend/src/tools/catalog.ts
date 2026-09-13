@@ -81,6 +81,30 @@ export const toolCatalog = [
     endpoint: '/api/v1/images/to-pdf',
     interfaceStatus: 'operational',
   },
+  {
+    id: 'office-docx-to-pdf',
+    category: 'office',
+    title: 'Word to PDF',
+    description: 'Convert a DOCX document into a PDF.',
+    endpoint: '/api/v1/office/docx-to-pdf',
+    interfaceStatus: 'operational',
+  },
+  {
+    id: 'office-pptx-to-pdf',
+    category: 'office',
+    title: 'PowerPoint to PDF',
+    description: 'Convert a PPTX presentation into a PDF.',
+    endpoint: '/api/v1/office/pptx-to-pdf',
+    interfaceStatus: 'operational',
+  },
+  {
+    id: 'office-xlsx-to-pdf',
+    category: 'office',
+    title: 'Excel to PDF',
+    description: 'Convert an XLSX workbook into a PDF.',
+    endpoint: '/api/v1/office/xlsx-to-pdf',
+    interfaceStatus: 'operational',
+  },
 ] as const satisfies readonly ToolDefinition[]
 
 export function toolsForCategory(category: ToolDefinition['category']) {

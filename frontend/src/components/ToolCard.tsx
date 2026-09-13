@@ -10,7 +10,7 @@ export function ToolCard({ tool, onOpen }: ToolCardProps) {
   return (
     <article className="tool-card">
       <div className={`tool-card__icon tool-card__icon--${tool.category}`} aria-hidden="true">
-        {tool.category === 'pdf' ? 'P' : 'I'}
+        {tool.category === 'pdf' ? 'P' : tool.category === 'image' ? 'I' : 'O'}
       </div>
       <div className="tool-card__content">
         <h3>{tool.title}</h3>

@@ -6,6 +6,17 @@ export function filenameFromContentDisposition(
     return fallback
   }
 
+  const encodedMatch = /(?:^|;)\s*filename\*\s*=\s*utf-8''([^;]*)/i.exec(contentDisposition)
+  if (encodedMatch) {
+    try {
+      const decoded = decodeURIComponent(encodedMatch[1])
+      const safe = sanitizeDownloadFilename(decoded)
+      if (safe) return safe
+    } catch {
+      // A malformed extended filename falls back to the ordinary filename.
+    }
+  }
+
   const match = /(?:^|;)\s*filename\s*=\s*(?:"([^"]*)"|([^;]*))/i.exec(
     contentDisposition,
   )

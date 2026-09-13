@@ -20,6 +20,15 @@ const imageTool = {
   interfaceStatus: 'operational',
 } as const
 
+const officeTool = {
+  id: 'office-docx-to-pdf',
+  category: 'office',
+  title: 'Word to PDF',
+  description: 'Convert a DOCX document.',
+  endpoint: '/api/v1/office/docx-to-pdf',
+  interfaceStatus: 'operational',
+} as const
+
 describe('ToolCard', () => {
   it('exposes a real action for an operational PDF tool', () => {
     render(<ToolCard tool={pdfTool} onOpen={() => undefined} />)
@@ -37,5 +46,11 @@ describe('ToolCard', () => {
     expect(article).toHaveTextContent('Ready')
     expect(screen.getByRole('button', { name: 'Open Convert image' })).toBeEnabled()
     expect(article).not.toHaveTextContent('/api/v1/images/convert')
+  })
+
+  it('exposes an Office action and category icon', () => {
+    render(<ToolCard tool={officeTool} onOpen={() => undefined} />)
+    expect(screen.getByRole('button', { name: 'Open Word to PDF' })).toBeEnabled()
+    expect(screen.getByText('O')).toHaveClass('tool-card__icon--office')
   })
 })

@@ -16,8 +16,10 @@ describe('DocuForge application shell', () => {
 
     const pdfSection = screen.getByRole('region', { name: 'PDF tools' })
     const imageSection = screen.getByRole('region', { name: 'Image tools' })
+    const officeSection = screen.getByRole('region', { name: 'Office tools' })
     expect(within(pdfSection).getAllByRole('article')).toHaveLength(6)
     expect(within(imageSection).getAllByRole('article')).toHaveLength(4)
+    expect(within(officeSection).getAllByRole('article')).toHaveLength(3)
 
     for (const title of [
       'Merge PDF',
@@ -30,12 +32,16 @@ describe('DocuForge application shell', () => {
       'Resize image',
       'Compress image',
       'Images to PDF',
+      'Word to PDF',
+      'PowerPoint to PDF',
+      'Excel to PDF',
     ]) {
       expect(screen.getAllByRole('heading', { level: 3, name: title })).toHaveLength(1)
     }
     expect(within(pdfSection).getAllByRole('button', { name: /^Open / })).toHaveLength(6)
     expect(within(imageSection).getAllByRole('button', { name: /^Open / })).toHaveLength(4)
-    expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(10)
+    expect(within(officeSection).getAllByRole('button', { name: /^Open / })).toHaveLength(3)
+    expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(13)
   })
 
   it('does not expose a form until a tool is selected', () => {
@@ -73,6 +79,16 @@ describe('DocuForge application shell', () => {
     expect(screen.getByRole('region', { name: 'Image tools' })).toBeVisible()
   })
 
+  it('opens an Office workflow, focuses its heading, and returns to the catalog', async () => {
+    const user = userEvent.setup()
+    render(<App checkHealth={pendingHealth} />)
+    await user.click(screen.getByRole('button', { name: 'Open Word to PDF' }))
+    expect(screen.getByRole('heading', { level: 1, name: 'Word to PDF' })).toHaveFocus()
+    expect(screen.getByRole('form', { name: 'Word to PDF form' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '← Back to tools' }))
+    expect(screen.getByRole('region', { name: 'Office tools' })).toBeVisible()
+  })
+
   it.each([
     'Merge PDF',
     'Split PDF',
@@ -84,6 +100,9 @@ describe('DocuForge application shell', () => {
     'Resize image',
     'Compress image',
     'Images to PDF',
+    'Word to PDF',
+    'PowerPoint to PDF',
+    'Excel to PDF',
   ])('opens the operational %s card', async (toolName) => {
     const user = userEvent.setup()
     render(<App checkHealth={pendingHealth} />)
