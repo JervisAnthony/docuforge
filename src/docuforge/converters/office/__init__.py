@@ -21,10 +21,15 @@ from docuforge.converters.office.models import (
     OfficeConversionRequest,
     OfficeConversionResult,
     PptxToPdfRequest,
+    XlsxToPdfRequest,
 )
 from docuforge.converters.office.pptx_to_pdf import (
     PptxToPdfConverter,
     convert_pptx_to_pdf,
+)
+from docuforge.converters.office.xlsx_to_pdf import (
+    XlsxToPdfConverter,
+    convert_xlsx_to_pdf,
 )
 
 __all__ = [
@@ -42,6 +47,9 @@ __all__ = [
     "OfficeEngineUnavailableError",
     "PptxToPdfConverter",
     "PptxToPdfRequest",
+    "XlsxToPdfConverter",
+    "XlsxToPdfRequest",
     "convert_docx_to_pdf",
     "convert_pptx_to_pdf",
+    "convert_xlsx_to_pdf",
 ]
