@@ -1,4 +1,4 @@
-# MVP2 Office conversion engine
+# MVP2 Office conversion
 
 ## Purpose and scope
 
@@ -9,8 +9,24 @@ conversion interface for the Open XML formats in this foundation:
 - PPTX to PDF
 - XLSX to PDF
 
-This is a low-level engine contract, not a user-facing Office workflow. The engine has no FastAPI,
-CLI, frontend, jobs-package, or uploaded-file coupling, and no conversion-fidelity claim is made.
+Commit 42 provides the low-level engine contract. Commit 43 adds the first concrete core workflow,
+DOCX to PDF, without FastAPI, CLI, frontend, jobs-package, or uploaded-file coupling. No
+conversion-fidelity claim is made.
+
+## DOCX to PDF core workflow
+
+`DocxToPdfRequest` represents exactly one DOCX source and one exact PDF destination.
+`DocxToPdfConverter` implements the standard converter contract and depends on an injected
+`OfficeConversionEngine`; it does not select or instantiate LibreOffice itself. Custom destination
+filenames are supported. Before rendering, the workflow performs lightweight DOCX authenticity
+checking by requiring a readable OOXML ZIP package containing `[Content_Types].xml` and
+`word/document.xml`.
+
+Rendering occurs in an isolated workflow workspace inside the destination directory. The workflow
+checks that the engine result matches the requested input and DOCX-to-PDF identity, and that its
+artifact resolves inside that workspace. Only a valid result is atomically published to the exact
+requested output path. Symlink and non-regular engine artifacts are rejected before publication.
+Existing output remains untouched when rendering or validation fails.
 
 ## Process model
 
@@ -37,8 +53,13 @@ replaced only after the newly staged PDF passes validation.
 
 LibreOffice is an external system dependency and is not yet guaranteed to be installed in the
 production container. No user-facing Office conversion is production-supported by this foundation.
-The planned progression is:
+The progression is:
 
-1. Commit 43: DOCX to PDF workflow.
-2. Commit 44: PPTX to PDF workflow.
-3. Commit 45: XLSX to PDF workflow.
+1. Commit 42: Office engine foundation — complete.
+2. Commit 43: DOCX to PDF core workflow — complete/current.
+3. Commit 44: PPTX to PDF core workflow.
+4. Commit 45: XLSX to PDF core workflow.
+5. Commit 46: Office API and browser workflows.
+
+LibreOffice remains an external dependency and is not guaranteed in the production container. No
+browser, API, CLI, or production Office workflow exists yet.
