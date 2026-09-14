@@ -38,6 +38,32 @@ def _validate_language(value: str) -> None:
         raise InvalidConversionRequestError("Invalid OCR language selector.")
 
 
+def _validate_dpi(value: int | None, *, required: bool = False, limit: int | None = None) -> None:
+    if value is None and not required:
+        return
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0 or (
+        limit is not None and value > limit
+    ):
+        raise InvalidConversionRequestError("Invalid OCR DPI setting.")
+
+
+def _validate_scanned_request(
+    input_path: Path,
+    output_path: Path,
+    language: str,
+    dpi: int,
+    max_pages: int,
+    max_pixels_per_page: int,
+) -> None:
+    _validate_path(input_path, "input_path")
+    _validate_path(output_path, "output_path")
+    _validate_language(language)
+    _validate_dpi(dpi, required=True, limit=600)
+    for value, name in ((max_pages, "max_pages"), (max_pixels_per_page, "max_pixels_per_page")):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise InvalidConversionRequestError(f"Invalid OCR {name} setting.")
+
+
 @dataclass(frozen=True, slots=True)
 class OcrEngineRequest:
     """Request one OCR artifact from one raster input."""
@@ -46,12 +72,14 @@ class OcrEngineRequest:
     output_directory: Path
     output_format: DocumentFormat
     language: str = "eng"
+    dpi: int | None = None
 
     def __post_init__(self) -> None:
         _validate_path(self.input_path, "input_path")
         _validate_path(self.output_directory, "output_directory")
         object.__setattr__(self, "output_format", _normalize_output_format(self.output_format))
         _validate_language(self.language)
+        _validate_dpi(self.dpi)
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,12 +90,14 @@ class OcrEngineResult:
     output_path: Path
     output_format: DocumentFormat
     language: str
+    dpi: int | None = None
 
     def __post_init__(self) -> None:
         _validate_path(self.input_path, "input_path")
         _validate_path(self.output_path, "output_path")
         object.__setattr__(self, "output_format", _normalize_output_format(self.output_format))
         _validate_language(self.language)
+        _validate_dpi(self.dpi)
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,3 +137,87 @@ class ImageToTextResult:
             raise InvalidConversionRequestError("Unsupported OCR source format.")
         object.__setattr__(self, "source_format", source_format)
         _validate_language(self.language)
+
+
+@dataclass(frozen=True, slots=True)
+class ScannedPdfToTextRequest:
+    """Bounded intent to OCR every PDF page into exact aggregate text."""
+
+    input_path: Path
+    output_path: Path
+    language: str = "eng"
+    dpi: int = 300
+    max_pages: int = 100
+    max_pixels_per_page: int = 40_000_000
+
+    def __post_init__(self) -> None:
+        _validate_scanned_request(
+            self.input_path, self.output_path, self.language, self.dpi,
+            self.max_pages, self.max_pixels_per_page,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ScannedPdfToTextResult:
+    """Exact page texts and their form-feed aggregate published at one path."""
+
+    input_path: Path
+    output_path: Path
+    text: str
+    page_texts: tuple[str, ...]
+    page_count: int
+    language: str
+    dpi: int
+
+    def __post_init__(self) -> None:
+        _validate_path(self.input_path, "input_path")
+        _validate_path(self.output_path, "output_path")
+        if not isinstance(self.text, str):
+            raise TypeError("text must be a string")
+        if not isinstance(self.page_texts, tuple) or any(
+            not isinstance(page_text, str) for page_text in self.page_texts
+        ):
+            raise TypeError("page_texts must be a tuple of strings")
+        if isinstance(self.page_count, bool) or not isinstance(self.page_count, int) or self.page_count <= 0:
+            raise InvalidConversionRequestError("OCR page_count must be positive.")
+        if len(self.page_texts) != self.page_count:
+            raise InvalidConversionRequestError("OCR page_texts count must match page_count.")
+        _validate_language(self.language)
+        _validate_dpi(self.dpi, required=True, limit=600)
+
+
+@dataclass(frozen=True, slots=True)
+class ScannedPdfToSearchablePdfRequest:
+    """Bounded intent to OCR every PDF page into a searchable PDF."""
+
+    input_path: Path
+    output_path: Path
+    language: str = "eng"
+    dpi: int = 300
+    max_pages: int = 100
+    max_pixels_per_page: int = 40_000_000
+
+    def __post_init__(self) -> None:
+        _validate_scanned_request(
+            self.input_path, self.output_path, self.language, self.dpi,
+            self.max_pages, self.max_pixels_per_page,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ScannedPdfToSearchablePdfResult:
+    """Identity of one completed scanned-PDF searchable artifact."""
+
+    input_path: Path
+    output_path: Path
+    page_count: int
+    language: str
+    dpi: int
+
+    def __post_init__(self) -> None:
+        _validate_path(self.input_path, "input_path")
+        _validate_path(self.output_path, "output_path")
+        if isinstance(self.page_count, bool) or not isinstance(self.page_count, int) or self.page_count <= 0:
+            raise InvalidConversionRequestError("OCR page_count must be positive.")
+        _validate_language(self.language)
+        _validate_dpi(self.dpi, required=True, limit=600)

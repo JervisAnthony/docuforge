@@ -10,6 +10,10 @@ from docuforge.converters.ocr import (
     ImageToTextResult,
     OcrEngineRequest,
     OcrEngineResult,
+    ScannedPdfToSearchablePdfRequest,
+    ScannedPdfToSearchablePdfResult,
+    ScannedPdfToTextRequest,
+    ScannedPdfToTextResult,
 )
 from docuforge.core import DocumentFormat, InvalidConversionRequestError
 
@@ -113,3 +117,62 @@ def test_image_to_text_models_validate_text_and_language():
         ImageToTextRequest(Path("a.png"), Path("a.txt"), "--unsafe")
     with pytest.raises(InvalidConversionRequestError):
         ImageToTextResult(Path("a.png"), Path("a.txt"), "", "png", "eng deu")
+
+
+@pytest.mark.parametrize("model", [OcrEngineRequest, OcrEngineResult])
+def test_engine_dpi_is_optional_and_backward_compatible(model):
+    args = (Path("a.png"), Path("out"), "txt", "eng")
+    assert model(*args).dpi is None
+    assert model(*args, dpi=300).dpi == 300
+
+
+@pytest.mark.parametrize("dpi", [True, False, 0, -1, 1.5, "300"])
+def test_engine_models_reject_invalid_dpi(dpi):
+    with pytest.raises(InvalidConversionRequestError):
+        OcrEngineRequest(Path("a.png"), Path("out"), "txt", dpi=dpi)
+    with pytest.raises(InvalidConversionRequestError):
+        OcrEngineResult(Path("a.png"), Path("out/a.txt"), "txt", "eng", dpi)
+
+
+@pytest.mark.parametrize("model", [ScannedPdfToTextRequest, ScannedPdfToSearchablePdfRequest])
+def test_scanned_requests_are_frozen_slotted_and_default_bounded(model):
+    item = model(Path("scan.pdf"), Path("out.txt"))
+    assert (item.language, item.dpi, item.max_pages, item.max_pixels_per_page) == (
+        "eng", 300, 100, 40_000_000
+    )
+    assert not hasattr(item, "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        item.dpi = 72
+
+
+@pytest.mark.parametrize("dpi", [72, 150, 300, 600])
+def test_scanned_requests_accept_valid_dpi(dpi):
+    assert ScannedPdfToTextRequest(Path("a.pdf"), Path("a.txt"), dpi=dpi).dpi == dpi
+
+
+@pytest.mark.parametrize("dpi", [True, False, 0, -1, 601, 1.5, "300"])
+def test_scanned_requests_reject_invalid_dpi(dpi):
+    with pytest.raises(InvalidConversionRequestError):
+        ScannedPdfToTextRequest(Path("a.pdf"), Path("a.txt"), dpi=dpi)
+
+
+@pytest.mark.parametrize("field", ["max_pages", "max_pixels_per_page"])
+@pytest.mark.parametrize("value", [True, 0, -1, 1.5, "100"])
+def test_scanned_requests_reject_invalid_limits(field, value):
+    with pytest.raises(InvalidConversionRequestError):
+        ScannedPdfToSearchablePdfRequest(Path("a.pdf"), Path("a.pdf"), **{field: value})
+
+
+def test_scanned_result_contracts():
+    text = ScannedPdfToTextResult(Path("a.pdf"), Path("a.txt"), "x\fy", ("x", "y"), 2, "eng", 300)
+    pdf = ScannedPdfToSearchablePdfResult(Path("a.pdf"), Path("b.pdf"), 2, "eng", 300)
+    assert not hasattr(text, "__dict__")
+    assert not hasattr(pdf, "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        text.text = "changed"
+    with pytest.raises(InvalidConversionRequestError):
+        ScannedPdfToTextResult(Path("a.pdf"), Path("a.txt"), "x", ("x",), 2, "eng", 300)
+    with pytest.raises(TypeError):
+        ScannedPdfToTextResult(Path("a.pdf"), Path("a.txt"), "x", ["x"], 1, "eng", 300)
+    with pytest.raises(InvalidConversionRequestError):
+        ScannedPdfToSearchablePdfResult(Path("a.pdf"), Path("b.pdf"), 0, "eng", 300)

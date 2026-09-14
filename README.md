@@ -154,8 +154,9 @@ print(result.output_path)
 
 The reusable conversion layer covers PDF merge, split, rotation, page removal and extraction, PDF rendering to raster images, image format conversion, aspect-preserving resize, image compression, and ordered images-to-PDF conversion.
 
-The [OCR foundation and Python image-to-text workflow](docs/mvp2-ocr.md) provide reusable raster
-OCR. OCR has no HTTP or browser workflow yet and is not deployed as a user-facing tool.
+The [OCR Python workflows](docs/mvp2-ocr.md) support image-to-text, scanned-PDF-to-text, and
+scanned-PDF-to-searchable-PDF conversion. OCR has no HTTP or browser workflow yet and is not
+deployed as a user-facing tool.
 
 ## Web API
 
