@@ -154,6 +154,9 @@ print(result.output_path)
 
 The reusable conversion layer covers PDF merge, split, rotation, page removal and extraction, PDF rendering to raster images, image format conversion, aspect-preserving resize, image compression, and ordered images-to-PDF conversion.
 
+The [OCR engine foundation](docs/mvp2-ocr.md) provides a low-level Tesseract-backed contract for
+raster-to-text and raster-to-searchable-PDF artifacts. OCR has no user-facing workflow yet.
+
 ## Web API
 
 Install the web dependencies and run:
