@@ -19,6 +19,9 @@ from docuforge.converters.image import (
     resize_image_path,
 )
 from docuforge.converters.ocr import (
+    ImageToTextConverter,
+    ImageToTextRequest,
+    ImageToTextResult,
     OcrEngine,
     OcrEngineExecutionError,
     OcrEngineRequest,
@@ -28,6 +31,7 @@ from docuforge.converters.ocr import (
     OcrError,
     OcrOutputError,
     TesseractEngine,
+    extract_text_from_image,
 )
 from docuforge.converters.office import (
     DocxToPdfConverter,
@@ -85,6 +89,9 @@ __all__ = [
     "ImageToPdfPathRequest",
     "ImageToPdfPathResult",
     "ImageToPdfRequest",
+    "ImageToTextConverter",
+    "ImageToTextRequest",
+    "ImageToTextResult",
     "OcrEngine",
     "OcrEngineExecutionError",
     "OcrEngineRequest",
@@ -127,6 +134,7 @@ __all__ = [
     "convert_pptx_to_pdf",
     "convert_xlsx_to_pdf",
     "extract_pdf_pages",
+    "extract_text_from_image",
     "pdf_to_images_path",
     "remove_pdf_pages",
     "resize_image_path",

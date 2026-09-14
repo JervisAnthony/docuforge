@@ -8,11 +8,20 @@ from docuforge.converters.ocr.exceptions import (
     OcrError,
     OcrOutputError,
 )
-from docuforge.converters.ocr.models import OcrEngineRequest, OcrEngineResult
+from docuforge.converters.ocr.image_to_text import ImageToTextConverter, extract_text_from_image
+from docuforge.converters.ocr.models import (
+    ImageToTextRequest,
+    ImageToTextResult,
+    OcrEngineRequest,
+    OcrEngineResult,
+)
 from docuforge.converters.ocr.tesseract import DEFAULT_OCR_TIMEOUT_SECONDS, TesseractEngine
 
 __all__ = [
     "DEFAULT_OCR_TIMEOUT_SECONDS",
+    "ImageToTextConverter",
+    "ImageToTextRequest",
+    "ImageToTextResult",
     "OcrEngine",
     "OcrEngineExecutionError",
     "OcrEngineRequest",
@@ -22,4 +31,5 @@ __all__ = [
     "OcrError",
     "OcrOutputError",
     "TesseractEngine",
+    "extract_text_from_image",
 ]
