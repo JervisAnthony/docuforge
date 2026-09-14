@@ -9,6 +9,8 @@ def test_public_exports_match():
         "OcrEngine", "OcrEngineRequest", "OcrEngineResult", "OcrError",
         "OcrEngineUnavailableError", "OcrEngineTimeoutError",
         "OcrEngineExecutionError", "OcrOutputError", "TesseractEngine",
+        "ImageToTextRequest", "ImageToTextResult", "ImageToTextConverter",
+        "extract_text_from_image",
     )
     for name in names:
         assert getattr(converters, name) is getattr(ocr, name)

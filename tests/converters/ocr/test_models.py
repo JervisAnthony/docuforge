@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from docuforge.converters.ocr import OcrEngineRequest, OcrEngineResult
+from docuforge.converters.ocr import (
+    ImageToTextRequest,
+    ImageToTextResult,
+    OcrEngineRequest,
+    OcrEngineResult,
+)
 from docuforge.core import DocumentFormat, InvalidConversionRequestError
 
 
@@ -63,3 +68,48 @@ def test_language_rejects_unsafe_selectors(language):
         OcrEngineRequest(Path("a.png"), Path("out"), "txt", language)
     with pytest.raises(InvalidConversionRequestError):
         OcrEngineResult(Path("a.png"), Path("out/a.txt"), "txt", language)
+
+
+def test_image_to_text_models_are_frozen_and_slotted():
+    request = ImageToTextRequest(Path("a.png"), Path("out/custom.txt"))
+    result = ImageToTextResult(Path("a.png"), Path("out/custom.txt"), "Hello", "PNG", "deu")
+    assert request.language == "eng"
+    assert result.source_format is DocumentFormat.PNG
+    assert result.language == "deu"
+    assert not hasattr(request, "__dict__")
+    assert not hasattr(result, "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        request.language = "deu"
+    with pytest.raises(FrozenInstanceError):
+        result.text = "changed"
+
+
+@pytest.mark.parametrize("field", ["input_path", "output_path"])
+def test_image_to_text_models_require_paths(field):
+    values = {"input_path": Path("a.png"), "output_path": Path("out/a.txt")}
+    values[field] = "not-a-path"
+    with pytest.raises(TypeError):
+        ImageToTextRequest(**values)
+    with pytest.raises(TypeError):
+        ImageToTextResult(**values, text="", source_format=DocumentFormat.PNG, language="eng")
+
+
+@pytest.mark.parametrize("source_format", ["jpg", "png", "webp", "bmp", "tiff"])
+def test_image_to_text_result_accepts_raster_formats(source_format):
+    result = ImageToTextResult(Path("a.png"), Path("a.txt"), "", source_format, "eng")
+    assert result.source_format is DocumentFormat.normalize(source_format)
+
+
+@pytest.mark.parametrize("source_format", ["gif", "pdf", "txt", "unknown"])
+def test_image_to_text_result_rejects_non_raster_formats(source_format):
+    with pytest.raises(InvalidConversionRequestError):
+        ImageToTextResult(Path("a.png"), Path("a.txt"), "", source_format, "eng")
+
+
+def test_image_to_text_models_validate_text_and_language():
+    with pytest.raises(TypeError):
+        ImageToTextResult(Path("a.png"), Path("a.txt"), b"text", "png", "eng")
+    with pytest.raises(InvalidConversionRequestError):
+        ImageToTextRequest(Path("a.png"), Path("a.txt"), "--unsafe")
+    with pytest.raises(InvalidConversionRequestError):
+        ImageToTextResult(Path("a.png"), Path("a.txt"), "", "png", "eng deu")
