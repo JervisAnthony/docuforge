@@ -1,64 +1,63 @@
-# MVP2 OCR: engine foundation and image-to-text workflow
+# MVP2 OCR: engine and core workflows
 
-Commit 47 established a reusable, framework-independent OCR engine boundary. Commit 48 adds a
-Python image-to-text workflow on top of it. OCR is not yet available through the API or browser.
+Commits 47–49 establish reusable Python OCR. OCR is not yet available through the API or browser.
+Tesseract remains an external executable and is not installed in CI or production by these commits.
 
 ```text
-ImageToTextRequest / future PDF workflow
-            |
-            v
-    ImageToTextConverter
-            |
-            v
-        OcrEngine
-            |
-            v
- TesseractEngine / future engine
-            |
-            v
-  external Tesseract CLI
+ImageToTextRequest ──> ImageToTextConverter ──┐
+                                             ├──> OcrEngine ──> TesseractEngine / future engine
+ScannedPdfToTextRequest ──> bounded renderer ──┤
+ScannedPdfToSearchablePdfRequest ──────────────┘
 ```
 
-`OcrEngine` accepts immutable `OcrEngineRequest` values and returns an `OcrEngineResult` describing
-one validated artifact. Workflows depend on this protocol and supply their own image or PDF content
-checks. `TesseractEngine` is the first implementation; it invokes the external executable with
-separate arguments, no shell, captured diagnostics, and a finite timeout. Public errors do not
-include process output or local paths.
+`OcrEngine` accepts immutable `OcrEngineRequest` values and returns a validated artifact identity.
+`TesseractEngine` is the first implementation. It discovers the local executable, runs it without a
+shell and with a finite timeout, and stages output per call. Text must decode as UTF-8; a PDF must
+start with `%PDF-`. Symlinks and non-regular artifacts are rejected before atomic publication.
+Engine requests may carry an explicit DPI; PDF workflows pass the renderer's DPI to Tesseract using
+separate `--dpi` and numeric arguments. Ordinary image OCR need not specify DPI.
 
-The low-level engine accepts one JPEG (`.jpg` or `.jpeg`), PNG, WebP, BMP, or TIFF (`.tif` or
-`.tiff`) raster input. It emits either UTF-8 recognized text (`TXT`, including valid empty text) or
-a searchable PDF (`PDF`) for that one raster image. It does not accept PDF input directly. A later
-scanned-PDF workflow will rasterize pages before calling the engine.
+The image-to-text workflow accepts one JPEG, PNG, WebP, BMP, or TIFF raster. Pillow fully decodes it
+before OCR, checks suffix/content agreement, and rejects multi-frame images. It passes the original
+raster to an injected `OcrEngine` without re-encoding or preprocessing. The workflow validates the
+engine result inside an isolated `.docuforge-image-ocr-*` directory, then atomically publishes exact
+UTF-8 text to the caller-selected `.txt` path. Empty text, whitespace, line endings, and Unicode are
+preserved. Structured engine failures propagate and existing output survives failures.
 
-Each engine call writes into a unique `.docuforge-ocr-*` directory inside the caller's existing
-output directory. The staged file must be current, regular, non-symlink, contained within that
-workspace, and valid for its format. A valid result is published with `os.replace`; existing output
-survives timeouts, process errors, missing or malformed artifacts, and publication failures. The
-temporary workspace is cleaned on success and normal failure.
+Commit 49 adds two scanned-PDF workflows:
 
-`ImageToTextRequest` names one raster source, an exact caller-selected `.txt` destination, and an
-OCR language selector. `ImageToTextConverter` requires an injected `OcrEngine` and returns an
-`ImageToTextResult` containing the exact recognized text, source format, and requested paths. The
-`extract_text_from_image` helper delegates to this converter.
+```text
+PDF -> bounded PNG rasterization -> per-page OcrEngine TXT -> "\f" aggregation -> TXT
+PDF -> bounded PNG rasterization -> per-page OcrEngine PDF -> pypdf assembly -> searchable PDF
+```
 
-The workflow uses Pillow to fully decode one JPEG, PNG, WebP, BMP, or TIFF image before invoking
-OCR. The decoded format must agree with the filename suffix, and multi-frame images are rejected.
-The original raster is passed to the engine without re-encoding or preprocessing. The engine runs
-inside a unique `.docuforge-image-ocr-*` workflow directory beneath the output parent. Its returned
-result is checked for source, TXT target, language, regular non-symlink artifact, workspace
-containment, and UTF-8 content. Only then is the artifact atomically moved to the requested path.
-Text is returned and published exactly as decoded, including whitespace, newlines, Unicode, and
-valid empty output. Existing output survives engine or validation failures. Structured engine
-errors propagate to callers. No user files are persisted beyond the requested result artifact.
+Both process **every page sequentially in source order** and make one OCR call per page. They reuse
+`pdf_to_images_path` with PNG intermediates, 300 DPI by default, at most 100 pages, and at most
+40,000,000 pixels per page. The OCR engine receives that explicit DPI. Each page gets its own engine
+output directory inside one `.docuforge-pdf-ocr-*` workflow workspace. Render and engine results
+are checked for identity, format, DPI, regular non-symlink files, and workspace containment.
 
-Tesseract remains an external system dependency; Commit 48 does not install it in production or
-CI. Engine tests inject executable resolution and process execution. Workflow tests use fake engines
-and need no Tesseract binary. There is no OCR API or browser workflow, no OCR CLI command, and no
-JobManager integration yet.
+Text extraction preserves each page's exact UTF-8 artifact in `page_texts`. The published `text` is
+`"\f".join(page_texts)`: one form feed between pages and no other normalization. Empty page text is
+valid. Searchable-PDF extraction requires each OCR page PDF to be parseable, unencrypted, exactly
+one page, and within one point of the raster's expected physical dimensions (`pixels × 72 / DPI`).
+The validated pages are assembled in order with pypdf; the final PDF is checked again before atomic
+publication. Existing caller output survives any render, OCR, validation, assembly, or publication
+failure, and temporary workspaces are cleaned.
+
+These workflows are intended for scanned or image-based PDFs. They rasterize and OCR every page;
+text-native PDFs are not specially optimized. Searchable output is reconstructed from OCR page PDFs.
+It does not preserve original vectors, fonts, selectable text, annotations, forms, hyperlinks,
+structure trees, or embedded files. Detecting existing text and hybrid preservation of original
+visuals are outside Commit 49.
+
+Tests use the real bounded PDF renderer with dynamically generated PDFs and fake OCR engines. No
+test needs a Tesseract installation. There is no OCR API/browser workflow, OCR CLI command,
+JobManager integration, cloud OCR, or persistent user-file storage beyond requested outputs.
 
 The progression is:
 
 1. Commit 47: OCR engine foundation — complete.
-2. Commit 48: image to text OCR — complete/current.
-3. Commit 49: scanned PDF to searchable PDF or extracted text.
+2. Commit 48: image to text OCR — complete.
+3. Commit 49: scanned PDF to text and searchable PDF — complete/current.
 4. Commit 50: OCR API and browser workflows.

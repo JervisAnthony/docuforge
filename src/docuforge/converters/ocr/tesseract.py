@@ -95,6 +95,8 @@ class TesseractEngine:
                     "-l",
                     request.language,
                 ]
+                if request.dpi is not None:
+                    args.extend(("--dpi", str(request.dpi)))
                 if request.output_format is DocumentFormat.PDF:
                     args.append("pdf")
                 self._run_process(args)
@@ -113,6 +115,7 @@ class TesseractEngine:
             output_path=final_output,
             output_format=request.output_format,
             language=request.language,
+            dpi=request.dpi,
         )
 
     def _run_process(self, args: Sequence[str]) -> None:

@@ -221,3 +221,21 @@ def test_publication_failure_preserves_output(executable, tmp_path, monkeypatch)
 def test_wrong_request_type(executable):
     with pytest.raises(TypeError):
         engine(executable, fake_runner(b"text")).recognize(object())
+
+
+@pytest.mark.parametrize("output_format,content", [(DocumentFormat.TXT, b"text"), (DocumentFormat.PDF, b"%PDF-1.7")])
+def test_explicit_dpi_is_separate_argument_and_result_metadata(
+    executable, tmp_path, output_format, content
+):
+    item = request(tmp_path, output_format=output_format)
+    item = OcrEngineRequest(item.input_path, item.output_directory, output_format, "eng", 300)
+    calls = []
+
+    def runner(args, **kwargs):
+        calls.append(args)
+        return fake_runner(content)(args, **kwargs)
+
+    result = engine(executable, runner).recognize(item)
+    assert calls[0][5:7] == ["--dpi", "300"]
+    assert calls[0][7:] == (["pdf"] if output_format is DocumentFormat.PDF else [])
+    assert result.dpi == 300

@@ -14,6 +14,16 @@ from docuforge.converters.ocr.models import (
     ImageToTextResult,
     OcrEngineRequest,
     OcrEngineResult,
+    ScannedPdfToSearchablePdfRequest,
+    ScannedPdfToSearchablePdfResult,
+    ScannedPdfToTextRequest,
+    ScannedPdfToTextResult,
+)
+from docuforge.converters.ocr.scanned_pdf import (
+    ScannedPdfToSearchablePdfConverter,
+    ScannedPdfToTextConverter,
+    extract_text_from_scanned_pdf,
+    make_scanned_pdf_searchable,
 )
 from docuforge.converters.ocr.tesseract import DEFAULT_OCR_TIMEOUT_SECONDS, TesseractEngine
 
@@ -30,6 +40,14 @@ __all__ = [
     "OcrEngineUnavailableError",
     "OcrError",
     "OcrOutputError",
+    "ScannedPdfToSearchablePdfConverter",
+    "ScannedPdfToSearchablePdfRequest",
+    "ScannedPdfToSearchablePdfResult",
+    "ScannedPdfToTextConverter",
+    "ScannedPdfToTextRequest",
+    "ScannedPdfToTextResult",
     "TesseractEngine",
     "extract_text_from_image",
+    "extract_text_from_scanned_pdf",
+    "make_scanned_pdf_searchable",
 ]
