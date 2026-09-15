@@ -4,10 +4,10 @@ test.beforeEach(async ({ page }) => {
   await visitCatalog(page)
 })
 
-test('catalog exposes thirteen connected operational tools', async ({ page }) => {
+test('catalog exposes sixteen connected operational tools', async ({ page }) => {
   await expect(page.getByLabel('DocuForge home')).toBeVisible()
-  await expect(page.getByRole('article')).toHaveCount(13)
-  await expect(page.getByRole('button', { name: /^Open / })).toHaveCount(13)
+  await expect(page.getByRole('article')).toHaveCount(16)
+  await expect(page.getByRole('button', { name: /^Open / })).toHaveCount(16)
 })
 
 test('Merge PDF downloads an ordered result', async ({ page }) => {

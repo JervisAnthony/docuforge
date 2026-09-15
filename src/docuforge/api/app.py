@@ -6,8 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from docuforge.api.config import ApiSettings
 from docuforge.api.errors import register_error_handlers
 from docuforge.api.observability import REQUEST_ID_HEADER, ProductionMiddleware
+from docuforge.api.ocr import OcrEngineFactory
 from docuforge.api.office import OfficeEngineFactory
 from docuforge.api.routes import create_api_router
+from docuforge.converters.ocr import TesseractEngine
 from docuforge.converters.office import LibreOfficeEngine
 
 
@@ -15,6 +17,7 @@ def create_app(
     settings: ApiSettings | None = None,
     *,
     office_engine_factory: OfficeEngineFactory = LibreOfficeEngine,
+    ocr_engine_factory: OcrEngineFactory = TesseractEngine,
 ) -> FastAPI:
     """Create a new, independently configured DocuForge API application."""
     resolved_settings = settings if settings is not None else ApiSettings()
@@ -43,7 +46,10 @@ def create_app(
     )
     register_error_handlers(application)
     application.include_router(
-        create_api_router(resolved_settings, office_engine_factory=office_engine_factory)
+        create_api_router(
+            resolved_settings, office_engine_factory=office_engine_factory,
+            ocr_engine_factory=ocr_engine_factory,
+        )
     )
     return application
 

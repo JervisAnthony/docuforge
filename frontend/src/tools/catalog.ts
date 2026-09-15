@@ -105,6 +105,30 @@ export const toolCatalog = [
     endpoint: '/api/v1/office/xlsx-to-pdf',
     interfaceStatus: 'operational',
   },
+  {
+    id: 'ocr-image-to-text',
+    category: 'ocr',
+    title: 'Image to Text',
+    description: 'Extract selectable text from a scanned image.',
+    endpoint: '/api/v1/ocr/image-to-text',
+    interfaceStatus: 'operational',
+  },
+  {
+    id: 'ocr-pdf-to-text',
+    category: 'ocr',
+    title: 'Scanned PDF to Text',
+    description: 'Extract text from every page of a scanned PDF.',
+    endpoint: '/api/v1/ocr/pdf-to-text',
+    interfaceStatus: 'operational',
+  },
+  {
+    id: 'ocr-pdf-to-searchable-pdf',
+    category: 'ocr',
+    title: 'Searchable PDF',
+    description: 'Turn a scanned PDF into a searchable PDF document.',
+    endpoint: '/api/v1/ocr/pdf-to-searchable-pdf',
+    interfaceStatus: 'operational',
+  },
 ] as const satisfies readonly ToolDefinition[]
 
 export function toolsForCategory(category: ToolDefinition['category']) {

@@ -5,6 +5,7 @@ import { ToolSection } from './components/ToolSection'
 import { ImageToolWorkspace } from './image/ImageToolWorkspace'
 import type { ImageRequestClient } from './image/types'
 import { OfficeToolWorkspace } from './office/OfficeToolWorkspace'
+import { OcrToolWorkspace } from './ocr/OcrToolWorkspace'
 import { PdfToolWorkspace } from './pdf/PdfToolWorkspace'
 import type { PdfRequestClient } from './pdf/types'
 import { toolById, toolsForCategory } from './tools/catalog'
@@ -16,9 +17,10 @@ interface AppProps {
   pdfClient?: PdfRequestClient
   imageClient?: ImageRequestClient
   officeClient?: MultipartRequestClient
+  ocrClient?: MultipartRequestClient
 }
 
-function App({ checkHealth, pdfClient, imageClient, officeClient }: AppProps) {
+function App({ checkHealth, pdfClient, imageClient, officeClient, ocrClient }: AppProps) {
   const [selectedTool, setSelectedTool] = useState<ToolId | null>(null)
   const selectedDefinition = selectedTool ? toolById(selectedTool) : null
 
@@ -44,14 +46,20 @@ function App({ checkHealth, pdfClient, imageClient, officeClient }: AppProps) {
             onBack={() => setSelectedTool(null)}
             client={officeClient}
           />
+        ) : selectedDefinition?.category === 'ocr' ? (
+          <OcrToolWorkspace
+            toolId={selectedDefinition.id}
+            onBack={() => setSelectedTool(null)}
+            client={ocrClient}
+          />
         ) : (
           <>
             <section className="intro" aria-labelledby="intro-heading">
               <p className="eyebrow">Document work, simplified</p>
               <h1 id="intro-heading">Choose the right tool for your file</h1>
               <p className="intro__copy">
-                DocuForge brings focused PDF, image, and Office utilities into one clear
-                workspace. Office conversion requires an available server rendering engine.
+                DocuForge brings focused PDF, image, Office, and OCR utilities into one clear
+                workspace. Some conversion and OCR tools depend on available server engines.
               </p>
             </section>
 
@@ -72,6 +80,12 @@ function App({ checkHealth, pdfClient, imageClient, officeClient }: AppProps) {
                 title="Office tools"
                 description="Convert Word documents, presentations, and workbooks to PDF when the server rendering engine is available."
                 tools={toolsForCategory('office')}
+                onOpen={setSelectedTool}
+              />
+              <ToolSection
+                title="OCR tools"
+                description="Extract text from scanned images and PDFs, or make scanned PDFs searchable."
+                tools={toolsForCategory('ocr')}
                 onOpen={setSelectedTool}
               />
             </div>

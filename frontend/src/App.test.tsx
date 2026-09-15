@@ -17,9 +17,11 @@ describe('DocuForge application shell', () => {
     const pdfSection = screen.getByRole('region', { name: 'PDF tools' })
     const imageSection = screen.getByRole('region', { name: 'Image tools' })
     const officeSection = screen.getByRole('region', { name: 'Office tools' })
+    const ocrSection = screen.getByRole('region', { name: 'OCR tools' })
     expect(within(pdfSection).getAllByRole('article')).toHaveLength(6)
     expect(within(imageSection).getAllByRole('article')).toHaveLength(4)
     expect(within(officeSection).getAllByRole('article')).toHaveLength(3)
+    expect(within(ocrSection).getAllByRole('article')).toHaveLength(3)
 
     for (const title of [
       'Merge PDF',
@@ -35,13 +37,17 @@ describe('DocuForge application shell', () => {
       'Word to PDF',
       'PowerPoint to PDF',
       'Excel to PDF',
+      'Image to Text',
+      'Scanned PDF to Text',
+      'Searchable PDF',
     ]) {
       expect(screen.getAllByRole('heading', { level: 3, name: title })).toHaveLength(1)
     }
     expect(within(pdfSection).getAllByRole('button', { name: /^Open / })).toHaveLength(6)
     expect(within(imageSection).getAllByRole('button', { name: /^Open / })).toHaveLength(4)
     expect(within(officeSection).getAllByRole('button', { name: /^Open / })).toHaveLength(3)
-    expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(13)
+    expect(within(ocrSection).getAllByRole('button', { name: /^Open / })).toHaveLength(3)
+    expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(16)
   })
 
   it('does not expose a form until a tool is selected', () => {
@@ -89,6 +95,17 @@ describe('DocuForge application shell', () => {
     expect(screen.getByRole('region', { name: 'Office tools' })).toBeVisible()
   })
 
+  it('opens an OCR workflow, focuses its heading, and returns to the catalog', async () => {
+    const user = userEvent.setup()
+    render(<App checkHealth={pendingHealth} />)
+    await user.click(screen.getByRole('button', { name: 'Open Image to Text' }))
+    expect(screen.getByRole('heading', { level: 1, name: 'Image to Text' })).toHaveFocus()
+    expect(screen.getByRole('form', { name: 'Image to Text form' })).toBeInTheDocument()
+    expect(screen.getByText('OCR requires the server OCR engine to be available.')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /Back to tools/ }))
+    expect(screen.getByRole('region', { name: 'OCR tools' })).toBeVisible()
+  })
+
   it.each([
     'Merge PDF',
     'Split PDF',
@@ -103,6 +120,9 @@ describe('DocuForge application shell', () => {
     'Word to PDF',
     'PowerPoint to PDF',
     'Excel to PDF',
+    'Image to Text',
+    'Scanned PDF to Text',
+    'Searchable PDF',
   ])('opens the operational %s card', async (toolName) => {
     const user = userEvent.setup()
     render(<App checkHealth={pendingHealth} />)
