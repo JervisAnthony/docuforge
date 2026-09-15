@@ -35,9 +35,9 @@ provide cross-process coordination, durable recovery, or distributed locking.
 
 ## Deliberate exclusions
 
-This foundation adds no HTTP job endpoints, frontend workflows, authentication or user accounts,
-worker or queue infrastructure, persistent storage, scheduling, cancellation, Office conversion,
-OCR, or batch-processing feature. Future Office, OCR, and batch work can identify its operation with
-a generic operation key and use the job lifecycle through the application service. Durable
-repositories and worker integrations can implement the same repository and domain contracts when
-those capabilities are required.
+This foundation adds no HTTP job endpoints, frontend job workflows, authentication or user accounts,
+worker or queue infrastructure, persistent storage, scheduling, or cancellation. Commit 51 adds a
+separate framework-independent [batch item model](mvp2-batch.md) for ordered multi-item state. Its
+`BatchRequest` reuses `OperationKey`, but it does not yet integrate automatically with `JobManager`
+or `JobRepository`, execute batch files, or add workers, queues, or persistence. Durable repositories
+and worker integrations can implement the same job contracts when those capabilities are required.
