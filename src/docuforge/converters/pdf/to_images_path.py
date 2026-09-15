@@ -49,7 +49,12 @@ def pdf_to_images_path(request: PdfToImagesPathRequest) -> PdfToImagesPathResult
                 suffix=".tmp",
             )
         )
-        with pdfium.PdfDocument(request.input_path) as document:
+        # Keep ownership of the source stream even if PDFium rejects the document
+        # during construction (notably a zero-page PDF on Windows).
+        with (
+            request.input_path.open("rb") as source_stream,
+            pdfium.PdfDocument(source_stream) as document,
+        ):
             page_count = len(document)
             if page_count == 0:
                 raise InvalidConversionRequestError(

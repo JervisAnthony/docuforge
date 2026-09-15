@@ -226,6 +226,19 @@ def test_corrupt_pdf_uses_stable_processing_error(
     assert not (tmp_path / "pages").exists()
 
 
+def test_zero_page_pdf_releases_source_handle_after_constructor_failure(tmp_path: Path) -> None:
+    source = tmp_path / "zero-page.pdf"
+    write_pdf(source)
+
+    with pytest.raises(PdfProcessingError, match="Unable to render"):
+        pdf_to_images_path(
+            PdfToImagesPathRequest(source, tmp_path / "pages", DocumentFormat.PNG)
+        )
+
+    source.unlink()  # Windows fails here if PDFium still owns the file handle.
+    assert not (tmp_path / "pages").exists()
+
+
 def test_encrypted_pdf_uses_stable_processing_error(tmp_path: Path) -> None:
     source = tmp_path / "source.pdf"
     write_pdf(source, (72, 72), encrypted=True)

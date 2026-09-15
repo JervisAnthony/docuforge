@@ -1,7 +1,8 @@
-# MVP2 OCR: engine and core workflows
+# MVP2 OCR: engine, core, API, and browser workflows
 
-Commits 47–49 establish reusable Python OCR. OCR is not yet available through the API or browser.
-Tesseract remains an external executable and is not installed in CI or production by these commits.
+Commits 47–49 establish reusable Python OCR. Commit 50 exposes all three core workflows through
+FastAPI and the browser. Tesseract remains an external executable and is not installed in CI or
+production by these commits.
 
 ```text
 ImageToTextRequest ──> ImageToTextConverter ──┐
@@ -51,13 +52,35 @@ It does not preserve original vectors, fonts, selectable text, annotations, form
 structure trees, or embedded files. Detecting existing text and hybrid preservation of original
 visuals are outside Commit 49.
 
-Tests use the real bounded PDF renderer with dynamically generated PDFs and fake OCR engines. No
-test needs a Tesseract installation. There is no OCR API/browser workflow, OCR CLI command,
-JobManager integration, cloud OCR, or persistent user-file storage beyond requested outputs.
+The HTTP and browser flow is:
+
+```text
+Browser -> one-file multipart POST -> FastAPI OCR route -> RequestWorkspace
+        -> existing OCR core workflow -> lazy OcrEngine factory -> TesseractEngine
+        -> TXT or searchable PDF download
+```
+
+The three endpoints are `POST /api/v1/ocr/image-to-text`, `POST /api/v1/ocr/pdf-to-text`, and
+`POST /api/v1/ocr/pdf-to-searchable-pdf`. Each accepts exactly one multipart `file`. API upload
+limits and extension policies filter transport; the core workflows validate image authenticity,
+PDF structure, rendering bounds, and OCR artifacts. PDF OCR uses the deployment's configured page
+and pixel limits, 300 DPI, and default English recognition. The complete blocking adapter,
+including lazy engine construction, runs in a worker thread. The API starts and remains healthy
+without Tesseract; only OCR requests attempt to construct the engine. An unavailable OCR engine
+returns a safe 503 response. Production Tesseract installation is not part of Commit 50.
+
+The browser catalog provides **Image to Text**, **Scanned PDF to Text**, and **Searchable PDF**.
+The text workflows show the extracted text and allow explicit download of the original returned
+TXT artifact, including an empty artifact. Searchable PDF downloads directly. Responses own
+workspace cleanup until transmission finishes. Uploads are not retained persistently. There is
+no OCR CLI, job system, batch OCR, cloud OCR, or persistent user-file storage.
+
+Tests use dynamically generated PDFs and fake OCR engines; CI and browser tests do not need a
+Tesseract installation.
 
 The progression is:
 
 1. Commit 47: OCR engine foundation — complete.
 2. Commit 48: image to text OCR — complete.
-3. Commit 49: scanned PDF to text and searchable PDF — complete/current.
-4. Commit 50: OCR API and browser workflows.
+3. Commit 49: scanned PDF to text and searchable PDF — complete.
+4. Commit 50: OCR API and browser workflows — complete/current.

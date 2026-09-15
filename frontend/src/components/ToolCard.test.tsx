@@ -29,6 +29,15 @@ const officeTool = {
   interfaceStatus: 'operational',
 } as const
 
+const ocrTool = {
+  id: 'ocr-image-to-text',
+  category: 'ocr',
+  title: 'Image to Text',
+  description: 'Extract image text.',
+  endpoint: '/api/v1/ocr/image-to-text',
+  interfaceStatus: 'operational',
+} as const
+
 describe('ToolCard', () => {
   it('exposes a real action for an operational PDF tool', () => {
     render(<ToolCard tool={pdfTool} onOpen={() => undefined} />)
@@ -52,5 +61,11 @@ describe('ToolCard', () => {
     render(<ToolCard tool={officeTool} onOpen={() => undefined} />)
     expect(screen.getByRole('button', { name: 'Open Word to PDF' })).toBeEnabled()
     expect(screen.getByText('O')).toHaveClass('tool-card__icon--office')
+  })
+
+  it('exposes a distinct OCR action and icon', () => {
+    render(<ToolCard tool={ocrTool} onOpen={() => undefined} />)
+    expect(screen.getByRole('button', { name: 'Open Image to Text' })).toBeEnabled()
+    expect(screen.getByText('T')).toHaveClass('tool-card__icon--ocr')
   })
 })

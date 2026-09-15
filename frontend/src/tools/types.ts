@@ -1,4 +1,4 @@
-export type ToolCategory = 'pdf' | 'image' | 'office'
+export type ToolCategory = 'pdf' | 'image' | 'office' | 'ocr'
 export type PdfToolId =
   | 'pdf-merge'
   | 'pdf-split'
@@ -12,7 +12,11 @@ export type ImageToolId =
   | 'image-compress'
   | 'images-to-pdf'
 export type OfficeToolId = 'office-docx-to-pdf' | 'office-pptx-to-pdf' | 'office-xlsx-to-pdf'
-export type ToolId = PdfToolId | ImageToolId | OfficeToolId
+export type OcrToolId =
+  | 'ocr-image-to-text'
+  | 'ocr-pdf-to-text'
+  | 'ocr-pdf-to-searchable-pdf'
+export type ToolId = PdfToolId | ImageToolId | OfficeToolId | OcrToolId
 export type ToolInterfaceStatus = 'operational' | 'backend-ready'
 
 interface ToolMetadata {
@@ -39,15 +43,23 @@ export interface OfficeToolDefinition extends ToolMetadata {
   interfaceStatus: 'operational'
 }
 
+export interface OcrToolDefinition extends ToolMetadata {
+  id: OcrToolId
+  category: 'ocr'
+  interfaceStatus: 'operational'
+}
+
 export type BackendReadyToolDefinition = ToolMetadata &
   (
     | { id: PdfToolId; category: 'pdf'; interfaceStatus: 'backend-ready' }
     | { id: ImageToolId; category: 'image'; interfaceStatus: 'backend-ready' }
     | { id: OfficeToolId; category: 'office'; interfaceStatus: 'backend-ready' }
+    | { id: OcrToolId; category: 'ocr'; interfaceStatus: 'backend-ready' }
   )
 
 export type ToolDefinition =
   | PdfToolDefinition
   | ImageToolDefinition
   | OfficeToolDefinition
+  | OcrToolDefinition
   | BackendReadyToolDefinition

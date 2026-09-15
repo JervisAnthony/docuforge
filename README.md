@@ -1,6 +1,6 @@
 # DocuForge
 
-DocuForge is a privacy-conscious PDF, image, and Office toolkit with a browser application, FastAPI service, command-line interface, and reusable Python conversion layer.
+DocuForge is a privacy-conscious PDF, image, Office, and OCR toolkit with a browser application, FastAPI service, command-line interface, and reusable Python conversion layer.
 
 The MVP is intentionally focused: process common document and image tasks without accounts, persistent document storage, or browser-side document parsing.
 
@@ -154,9 +154,9 @@ print(result.output_path)
 
 The reusable conversion layer covers PDF merge, split, rotation, page removal and extraction, PDF rendering to raster images, image format conversion, aspect-preserving resize, image compression, and ordered images-to-PDF conversion.
 
-The [OCR Python workflows](docs/mvp2-ocr.md) support image-to-text, scanned-PDF-to-text, and
-scanned-PDF-to-searchable-PDF conversion. OCR has no HTTP or browser workflow yet and is not
-deployed as a user-facing tool.
+The [OCR workflows](docs/mvp2-ocr.md) support image-to-text, scanned-PDF-to-text, and
+scanned-PDF-to-searchable-PDF conversion through Python, HTTP, and browser interfaces. OCR
+requires an available server OCR runtime; the hosted deployment has not been validated with one.
 
 ## Web API
 
@@ -207,7 +207,6 @@ The following are intentionally outside the MVP1 scope:
 - authentication and user accounts
 - persistent cloud document storage
 - background job infrastructure
-- OCR
 - password input for encrypted PDFs
 - in-place PDF modification
 
@@ -216,6 +215,9 @@ These are future product decisions, not missing requirements for the current ten
 MVP2 adds browser and API workflows for DOCX, PPTX, and XLSX to PDF. Their server-side Office
 rendering engine is optional at startup and is not yet guaranteed in production; requests return a
 safe availability error when it is missing.
+
+MVP2 also adds browser and API OCR workflows. The server starts without an OCR engine, and an OCR
+request returns a safe availability error when that optional runtime is missing.
 
 ## Feedback
 
