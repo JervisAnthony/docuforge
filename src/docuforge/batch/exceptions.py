@@ -17,3 +17,7 @@ class InvalidBatchTransitionError(BatchError):
 
 class BatchItemNotFoundError(BatchError):
     """A valid item identity is absent from the requested batch."""
+
+
+class BatchProcessingError(BatchError):
+    """Batch-wide processing infrastructure could not complete safely."""
