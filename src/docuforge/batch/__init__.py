@@ -3,20 +3,8 @@
 from docuforge.batch.exceptions import (
     BatchError,
     BatchItemNotFoundError,
-    BatchProcessingError,
     InvalidBatchDefinitionError,
     InvalidBatchTransitionError,
-)
-from docuforge.batch.image import (
-    BatchImageCompressRequest,
-    BatchImageConvertRequest,
-    BatchImageInput,
-    BatchImageOutput,
-    BatchImageResizeRequest,
-    BatchImageResult,
-    batch_compress_images,
-    batch_convert_images,
-    batch_resize_images,
 )
 from docuforge.batch.models import (
     Batch,
@@ -36,12 +24,6 @@ __all__ = [
     "Batch",
     "BatchError",
     "BatchId",
-    "BatchImageCompressRequest",
-    "BatchImageConvertRequest",
-    "BatchImageInput",
-    "BatchImageOutput",
-    "BatchImageResizeRequest",
-    "BatchImageResult",
     "BatchItem",
     "BatchItemFailure",
     "BatchItemId",
@@ -49,13 +31,9 @@ __all__ = [
     "BatchItemRequest",
     "BatchItemResult",
     "BatchItemStatus",
-    "BatchProcessingError",
     "BatchRequest",
     "BatchStatus",
     "BatchSummary",
     "InvalidBatchDefinitionError",
     "InvalidBatchTransitionError",
-    "batch_compress_images",
-    "batch_convert_images",
-    "batch_resize_images",
 ]
