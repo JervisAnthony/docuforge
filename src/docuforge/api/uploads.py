@@ -114,28 +114,9 @@ async def store_uploads(
                 )
 
             stored_path = workspace.path / f"{uuid4().hex}{suffix}"
-            file_size = 0
-            try:
-                with stored_path.open("xb") as destination:
-                    while chunk := await upload.read(policy.chunk_bytes):
-                        file_size += len(chunk)
-                        if file_size > policy.max_file_bytes:
-                            raise ApiError(
-                                status_code=413,
-                                code="upload_too_large",
-                                message="An uploaded file exceeds the allowed size.",
-                            )
-                        if request_size + len(chunk) > policy.max_request_bytes:
-                            raise ApiError(
-                                status_code=413,
-                                code="upload_request_too_large",
-                                message="The combined upload size exceeds the allowed size.",
-                            )
-                        destination.write(chunk)
-                        request_size += len(chunk)
-            except BaseException:
-                stored_path.unlink(missing_ok=True)
-                raise
+            file_size, request_size = await _write_upload(
+                upload, stored_path, policy=policy, request_size=request_size
+            )
 
             stored_uploads.append(
                 StoredUpload(
@@ -150,6 +131,89 @@ async def store_uploads(
     finally:
         for upload in uploads:
             await upload.close()
+
+
+async def store_batch_uploads(
+    uploads: Sequence[UploadFile],
+    *,
+    input_directory: Path,
+    policy: UploadPolicy,
+) -> tuple[StoredUpload, ...]:
+    """Store ordered uploads under isolated item directories using safe original basenames."""
+    try:
+        if not uploads:
+            raise ApiError(
+                status_code=400,
+                code="invalid_batch_request",
+                message="At least one file is required.",
+            )
+        if len(uploads) > policy.max_files:
+            raise ApiError(
+                status_code=413,
+                code="too_many_files",
+                message="Too many uploaded files.",
+            )
+        stored_uploads: list[StoredUpload] = []
+        request_size = 0
+        for position, upload in enumerate(uploads, start=1):
+            original_name = normalize_client_filename(upload.filename)
+            suffix = Path(original_name).suffix.lower()
+            if policy.allowed_extensions is not None and suffix not in policy.allowed_extensions:
+                raise ApiError(
+                    status_code=415,
+                    code="unsupported_file_extension",
+                    message="File extension is not supported.",
+                )
+            item_directory = input_directory / f"item-{position:04d}"
+            item_directory.mkdir()
+            stored_path = item_directory / original_name
+            file_size, request_size = await _write_upload(
+                upload, stored_path, policy=policy, request_size=request_size
+            )
+            stored_uploads.append(
+                StoredUpload(
+                    original_name=original_name,
+                    stored_path=stored_path,
+                    size_bytes=file_size,
+                    content_type=upload.content_type,
+                )
+            )
+        return tuple(stored_uploads)
+    finally:
+        for upload in uploads:
+            await upload.close()
+
+
+async def _write_upload(
+    upload: UploadFile,
+    stored_path: Path,
+    *,
+    policy: UploadPolicy,
+    request_size: int,
+) -> tuple[int, int]:
+    file_size = 0
+    try:
+        with stored_path.open("xb") as destination:
+            while chunk := await upload.read(policy.chunk_bytes):
+                file_size += len(chunk)
+                if file_size > policy.max_file_bytes:
+                    raise ApiError(
+                        status_code=413,
+                        code="upload_too_large",
+                        message="An uploaded file exceeds the allowed size.",
+                    )
+                if request_size + len(chunk) > policy.max_request_bytes:
+                    raise ApiError(
+                        status_code=413,
+                        code="upload_request_too_large",
+                        message="The combined upload size exceeds the allowed size.",
+                    )
+                destination.write(chunk)
+                request_size += len(chunk)
+    except BaseException:
+        stored_path.unlink(missing_ok=True)
+        raise
+    return file_size, request_size
 
 
 def _normalize_allowed_extension(extension: str) -> str:

@@ -44,3 +44,25 @@ test('Images to PDF reorders pages and downloads a PDF', async ({ page }) => {
   await expect(items.nth(1)).toContainText('portrait.png')
   await expectDownload(page, () => page.getByRole('button', { name: 'Create PDF' }).click(), /^images\.pdf$/)
 })
+
+test('Batch image convert tracks ordered items and downloads a ZIP', async ({ page }) => {
+  await openTool(page, 'Batch image convert')
+  await page.getByLabel('Image files').setInputFiles([fixturePaths.portraitPng, fixturePaths.landscapePng])
+  await page.getByLabel('Output format').selectOption('jpeg')
+  await page.getByRole('button', { name: 'Start batch' }).click()
+
+  const status = page.getByRole('region', { name: 'Batch status' })
+  await expect(status).toContainText('2 / 2 processed')
+  await expect(status).toContainText('Status: completed')
+  const items = page.getByRole('list', { name: 'Batch items' }).getByRole('listitem')
+  await expect(items).toHaveCount(2)
+  await expect(items.nth(0)).toContainText('portrait.png')
+  await expect(items.nth(1)).toContainText('landscape.png')
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Download ZIP' }).click(),
+  ])
+  expect(download.suggestedFilename()).toMatch(/^docuforge-batch-.+\.zip$/)
+  expect(await download.failure()).toBeNull()
+})

@@ -15,10 +15,12 @@ describe('DocuForge application shell', () => {
     ).toBeVisible()
 
     const pdfSection = screen.getByRole('region', { name: 'PDF tools' })
+    const batchSection = screen.getByRole('region', { name: 'Batch tools' })
     const imageSection = screen.getByRole('region', { name: 'Image tools' })
     const officeSection = screen.getByRole('region', { name: 'Office tools' })
     const ocrSection = screen.getByRole('region', { name: 'OCR tools' })
     expect(within(pdfSection).getAllByRole('article')).toHaveLength(6)
+    expect(within(batchSection).getAllByRole('article')).toHaveLength(4)
     expect(within(imageSection).getAllByRole('article')).toHaveLength(4)
     expect(within(officeSection).getAllByRole('article')).toHaveLength(3)
     expect(within(ocrSection).getAllByRole('article')).toHaveLength(3)
@@ -40,14 +42,19 @@ describe('DocuForge application shell', () => {
       'Image to Text',
       'Scanned PDF to Text',
       'Searchable PDF',
+      'Batch image convert',
+      'Batch image resize',
+      'Batch image compress',
+      'Batch Office to PDF',
     ]) {
       expect(screen.getAllByRole('heading', { level: 3, name: title })).toHaveLength(1)
     }
     expect(within(pdfSection).getAllByRole('button', { name: /^Open / })).toHaveLength(6)
+    expect(within(batchSection).getAllByRole('button', { name: /^Open / })).toHaveLength(4)
     expect(within(imageSection).getAllByRole('button', { name: /^Open / })).toHaveLength(4)
     expect(within(officeSection).getAllByRole('button', { name: /^Open / })).toHaveLength(3)
     expect(within(ocrSection).getAllByRole('button', { name: /^Open / })).toHaveLength(3)
-    expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(16)
+    expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(20)
   })
 
   it('does not expose a form until a tool is selected', () => {

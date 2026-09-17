@@ -10,6 +10,13 @@ function jsonResponse(body: unknown, init: ResponseInit = {}) {
 }
 
 describe('API client', () => {
+  const batch = {
+    id: 'batch-1', operation: 'image.convert', attempt: 1, phase: 'ready', status: 'completed', progress_percent: 100,
+    cancellation_requested: false,
+    summary: { total: 1, pending: 0, running: 0, completed: 1, failed: 0, cancelled: 0, processed: 1, remaining: 0 },
+    items: [{ id: 'item-1', position: 0, descriptor: 'photo.png', status: 'completed', result_descriptor: '0001-photo.jpg', failure: null }],
+    session_error: null, can_cancel: false, can_recover: false, can_download: true,
+  }
   it('gets and validates API health', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({ status: 'ok', service: 'docuforge', version: '0.1.0' }),
@@ -129,5 +136,32 @@ describe('API client', () => {
       status: 400,
       code: 'invalid_pdf_request',
     })
+  })
+
+  it('creates, polls, controls, and downloads batches through explicit methods', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(batch, { status: 202 }))
+      .mockResolvedValueOnce(jsonResponse(batch))
+      .mockResolvedValueOnce(jsonResponse(batch, { status: 202 }))
+      .mockResolvedValueOnce(jsonResponse(batch, { status: 202 }))
+      .mockResolvedValueOnce(new Response('zip', { headers: { 'Content-Type': 'application/zip' } }))
+    const client = createApiClient('', fetchMock)
+    await expect(client.createBatch('/api/v1/batches/images/convert', new FormData())).resolves.toEqual(batch)
+    await client.getBatchStatus('batch/unsafe')
+    await client.cancelBatch('batch-1')
+    await client.recoverBatch('batch-1')
+    await expect(client.downloadBatch('batch-1')).resolves.toMatchObject({ contentType: 'application/zip' })
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/batches/images/convert',
+      '/api/v1/batches/batch%2Funsafe',
+      '/api/v1/batches/batch-1/cancel',
+      '/api/v1/batches/batch-1/recover',
+      '/api/v1/batches/batch-1/download',
+    ])
+  })
+
+  it('rejects malformed batch status JSON', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ...batch, progress_percent: 101 }))
+    await expect(createApiClient('', fetchMock).getBatchStatus('batch-1')).rejects.toMatchObject({ kind: 'malformed-response' })
   })
 })

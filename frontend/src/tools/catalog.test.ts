@@ -2,9 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { toolCatalog, toolsForCategory } from './catalog'
 
 describe('tool catalog', () => {
-  it('contains sixteen operational capabilities with unique IDs', () => {
-    expect(toolCatalog).toHaveLength(16)
-    expect(new Set(toolCatalog.map((tool) => tool.id)).size).toBe(16)
+  it('contains twenty operational capabilities with unique IDs', () => {
+    expect(toolCatalog).toHaveLength(20)
+    expect(new Set(toolCatalog.map((tool) => tool.id)).size).toBe(20)
+    expect(toolsForCategory('batch').map((tool) => tool.title)).toEqual([
+      'Batch image convert',
+      'Batch image resize',
+      'Batch image compress',
+      'Batch Office to PDF',
+    ])
     expect(toolsForCategory('pdf').map((tool) => tool.title)).toEqual([
       'Merge PDF',
       'Split PDF',
@@ -33,6 +39,10 @@ describe('tool catalog', () => {
 
   it('matches the existing API endpoint contract', () => {
     expect(toolCatalog.map((tool) => tool.endpoint)).toEqual([
+      '/api/v1/batches/images/convert',
+      '/api/v1/batches/images/resize',
+      '/api/v1/batches/images/compress',
+      '/api/v1/batches/office/to-pdf',
       '/api/v1/pdf/merge',
       '/api/v1/pdf/split',
       '/api/v1/pdf/rotate',

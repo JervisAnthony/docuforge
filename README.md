@@ -158,6 +158,11 @@ The [OCR workflows](docs/mvp2-ocr.md) support image-to-text, scanned-PDF-to-text
 scanned-PDF-to-searchable-PDF conversion through Python, HTTP, and browser interfaces. OCR
 requires an available server OCR runtime; the hosted deployment has not been validated with one.
 
+The [batch workflows](docs/mvp2-batch.md) process ordered image or mixed Office uploads with
+item-level progress, cooperative cancellation, selective retry, and ZIP download. Batch sessions
+and recovery are process-local and expire; they do not survive a server restart or cross-worker
+routing.
+
 ## Web API
 
 Install the web dependencies and run:

@@ -55,6 +55,7 @@ class BatchItemStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class BatchStatus(str, Enum):
@@ -65,6 +66,7 @@ class BatchStatus(str, Enum):
     COMPLETED = "completed"
     PARTIAL = "partial"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 def _required_text(value: str, *, name: str) -> str:
@@ -182,6 +184,19 @@ class BatchItem:
             raise InvalidBatchDefinitionError("A failed item requires a BatchItemFailure.")
         return self._snapshot(status=BatchItemStatus.FAILED, failure=failure)
 
+    def cancel(self) -> BatchItem:
+        """Return a cancelled snapshot from a pending item."""
+        self._require_status(BatchItemStatus.PENDING, target=BatchItemStatus.CANCELLED)
+        return self._snapshot(status=BatchItemStatus.CANCELLED)
+
+    def recover(self) -> BatchItem:
+        """Return a fresh pending snapshot from a failed or cancelled item."""
+        if self.status not in {BatchItemStatus.FAILED, BatchItemStatus.CANCELLED}:
+            raise InvalidBatchTransitionError(
+                "Only failed or cancelled batch items can be recovered."
+            )
+        return self._snapshot(status=BatchItemStatus.PENDING)
+
     def _require_status(self, expected: BatchItemStatus, *, target: BatchItemStatus) -> None:
         if self.status is not expected:
             raise InvalidBatchTransitionError(
@@ -202,7 +217,12 @@ class BatchItem:
 
 
 def _status_from_counts(
-    total: int, pending: int, running: int, completed: int, failed: int,
+    total: int,
+    pending: int,
+    running: int,
+    completed: int,
+    failed: int,
+    cancelled: int,
 ) -> BatchStatus:
     if pending == total:
         return BatchStatus.PENDING
@@ -210,6 +230,8 @@ def _status_from_counts(
         return BatchStatus.COMPLETED
     if failed == total:
         return BatchStatus.FAILED
+    if cancelled == total:
+        return BatchStatus.CANCELLED
     if pending == 0 and running == 0:
         return BatchStatus.PARTIAL
     return BatchStatus.RUNNING
@@ -225,6 +247,7 @@ class BatchSummary:
     running_count: int
     completed_count: int
     failed_count: int
+    cancelled_count: int
     processed_count: int
     remaining_count: int
 
@@ -232,23 +255,33 @@ class BatchSummary:
         counts = (
             self.total_count, self.pending_count, self.running_count,
             self.completed_count, self.failed_count, self.processed_count,
-            self.remaining_count,
+            self.cancelled_count, self.remaining_count,
         )
         if any(type(count) is not int or count < 0 for count in counts) or self.total_count == 0:
             raise InvalidBatchDefinitionError("Batch summary counts must be valid integers.")
         if (
-            self.pending_count + self.running_count + self.completed_count + self.failed_count
+            self.pending_count
+            + self.running_count
+            + self.completed_count
+            + self.failed_count
+            + self.cancelled_count
             != self.total_count
-            or self.processed_count != self.completed_count + self.failed_count
+            or self.processed_count
+            != self.completed_count + self.failed_count + self.cancelled_count
             or self.remaining_count != self.pending_count + self.running_count
         ):
             raise InvalidBatchDefinitionError("Batch summary counts are inconsistent.")
         expected_status = _status_from_counts(
             self.total_count, self.pending_count, self.running_count,
-            self.completed_count, self.failed_count,
+            self.completed_count, self.failed_count, self.cancelled_count,
         )
         if not isinstance(self.status, BatchStatus) or self.status is not expected_status:
             raise InvalidBatchDefinitionError("Batch summary status is inconsistent.")
+
+    @property
+    def progress_percent(self) -> int:
+        """Return exact item-granular integer progress."""
+        return self.processed_count * 100 // self.total_count
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,7 +307,7 @@ class Batch:
     @property
     def summary(self) -> BatchSummary:
         """Derive a fresh immutable summary from this exact item snapshot."""
-        pending = running = completed = failed = 0
+        pending = running = completed = failed = cancelled = 0
         for item in self.items:
             if item.status is BatchItemStatus.PENDING:
                 pending += 1
@@ -282,14 +315,18 @@ class Batch:
                 running += 1
             elif item.status is BatchItemStatus.COMPLETED:
                 completed += 1
-            else:
+            elif item.status is BatchItemStatus.FAILED:
                 failed += 1
+            else:
+                cancelled += 1
         total = len(self.items)
         return BatchSummary(
-            status=_status_from_counts(total, pending, running, completed, failed),
+            status=_status_from_counts(total, pending, running, completed, failed, cancelled),
             total_count=total, pending_count=pending, running_count=running,
             completed_count=completed, failed_count=failed,
-            processed_count=completed + failed, remaining_count=pending + running,
+            cancelled_count=cancelled,
+            processed_count=completed + failed + cancelled,
+            remaining_count=pending + running,
         )
 
     @property
@@ -317,6 +354,10 @@ class Batch:
         return self.summary.failed_count
 
     @property
+    def cancelled_count(self) -> int:
+        return self.summary.cancelled_count
+
+    @property
     def processed_count(self) -> int:
         return self.summary.processed_count
 
@@ -326,7 +367,12 @@ class Batch:
 
     @property
     def is_terminal(self) -> bool:
-        return self.status in {BatchStatus.COMPLETED, BatchStatus.PARTIAL, BatchStatus.FAILED}
+        return self.status in {
+            BatchStatus.COMPLETED,
+            BatchStatus.PARTIAL,
+            BatchStatus.FAILED,
+            BatchStatus.CANCELLED,
+        }
 
     def get_item(self, item_id: BatchItemId | str) -> BatchItem:
         """Look up an item by stable UUID identity, never by descriptor."""
@@ -347,6 +393,53 @@ class Batch:
         index = self._item_index(item_id)
         return self._replace_item(index, self.items[index].fail(failure))
 
+    def cancel_item(self, item_id: BatchItemId | str) -> Batch:
+        """Return a snapshot with one pending item cancelled."""
+        index = self._item_index(item_id)
+        return self._replace_item(index, self.items[index].cancel())
+
+    def cancel_pending_items(self) -> Batch:
+        """Cancel all pending items while preserving every other snapshot."""
+        return self._with_items(
+            tuple(
+                item.cancel() if item.status is BatchItemStatus.PENDING else item
+                for item in self.items
+            )
+        )
+
+    def recover_items(self) -> Batch:
+        """Reset failed and cancelled items in a terminal batch to pending."""
+        if not self.is_terminal:
+            raise InvalidBatchTransitionError("Only a terminal batch can be recovered.")
+        if not any(
+            item.status in {BatchItemStatus.FAILED, BatchItemStatus.CANCELLED}
+            for item in self.items
+        ):
+            raise InvalidBatchTransitionError("The batch has no recoverable items.")
+        return self._with_items(
+            tuple(
+                item.recover()
+                if item.status in {BatchItemStatus.FAILED, BatchItemStatus.CANCELLED}
+                else item
+                for item in self.items
+            )
+        )
+
+    def fail_nonterminal_items(self, failure: BatchItemFailure) -> Batch:
+        """Safely terminalize pending and running items after infrastructure failure."""
+        if not isinstance(failure, BatchItemFailure):
+            raise InvalidBatchDefinitionError(
+                "Infrastructure terminalization requires a BatchItemFailure."
+            )
+        return self._with_items(
+            tuple(
+                item.fail(failure)
+                if item.status in {BatchItemStatus.PENDING, BatchItemStatus.RUNNING}
+                else item
+                for item in self.items
+            )
+        )
+
     def _item_index(self, item_id: BatchItemId | str) -> int:
         normalized = BatchItemId(item_id)
         for index, item in enumerate(self.items):
@@ -355,9 +448,10 @@ class Batch:
         raise BatchItemNotFoundError("Batch item was not found.")
 
     def _replace_item(self, index: int, item: BatchItem) -> Batch:
+        return self._with_items(self.items[:index] + (item,) + self.items[index + 1:])
+
+    def _with_items(self, items: tuple[BatchItem, ...]) -> Batch:
         snapshot = object.__new__(Batch)
         object.__setattr__(snapshot, "request", self.request)
-        object.__setattr__(
-            snapshot, "items", self.items[:index] + (item,) + self.items[index + 1:]
-        )
+        object.__setattr__(snapshot, "items", items)
         return snapshot

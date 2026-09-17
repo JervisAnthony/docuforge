@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from docuforge.batch.control import BatchCancellationToken, BatchProgressCallback
 from docuforge.batch.exceptions import BatchProcessingError, InvalidBatchDefinitionError
 from docuforge.batch.models import (
     Batch,
@@ -198,25 +199,33 @@ class BatchDocumentResult:
 
 
 def batch_convert_documents(
-    request: BatchDocumentConvertRequest, *, engine: OfficeConversionEngine
+    request: BatchDocumentConvertRequest,
+    *,
+    engine: OfficeConversionEngine,
+    cancellation: BatchCancellationToken | None = None,
+    on_progress: BatchProgressCallback | None = None,
+    recover_from: BatchDocumentResult | None = None,
 ) -> BatchDocumentResult:
     """Convert supported Office items sequentially while isolating expected failures."""
     if not isinstance(request, BatchDocumentConvertRequest):
         raise TypeError("request must be a BatchDocumentConvertRequest")
     if not callable(getattr(engine, "convert_to_pdf", None)):
         raise TypeError("engine must implement OfficeConversionEngine")
+    if cancellation is not None and not isinstance(cancellation, BatchCancellationToken):
+        raise TypeError("cancellation must be a BatchCancellationToken")
+    if on_progress is not None and not callable(on_progress):
+        raise TypeError("on_progress must be callable")
     _validate_output_directory(request.output_directory)
-    batch = Batch(
-        BatchRequest(
-            request.batch_id,
-            _OPERATION,
-            tuple(
-                BatchItemRequest(item.id, position, item.descriptor)
-                for position, item in enumerate(request.items)
-            ),
-        )
+    batch_request = BatchRequest(
+        request.batch_id,
+        _OPERATION,
+        tuple(
+            BatchItemRequest(item.id, position, item.descriptor)
+            for position, item in enumerate(request.items)
+        ),
     )
-    outputs: list[BatchDocumentOutput] = []
+    batch, outputs = _prepare_document_attempt(request, batch_request, recover_from)
+    _notify(on_progress, batch)
     temporary_directory: TemporaryDirectory[str] | None = None
     try:
         try:
@@ -228,10 +237,18 @@ def batch_convert_documents(
             raise BatchProcessingError("Unable to process the document batch.") from error
         workspace = Path(temporary_directory.name)
         for position, item in enumerate(request.items):
+            if batch.items[position].status is BatchItemStatus.COMPLETED:
+                continue
+            if cancellation is not None and cancellation.cancellation_requested:
+                batch = batch.cancel_pending_items()
+                _notify(on_progress, batch)
+                break
             batch = batch.start_item(item.id)
+            _notify(on_progress, batch)
             source_format = _FORMAT_BY_SUFFIX.get(item.input_path.suffix.lower())
             if source_format is None:
                 batch = batch.fail_item(item.id, _UNSUPPORTED_FORMAT_FAILURE)
+                _notify(on_progress, batch)
                 continue
             item_workspace = workspace / f"item-{position + 1:04d}"
             final_output = request.output_directory / _output_name(item.input_path, position)
@@ -241,10 +258,12 @@ def batch_convert_documents(
                     for source in request.items
                 ):
                     batch = batch.fail_item(item.id, _INVALID_REQUEST_FAILURE)
+                    _notify(on_progress, batch)
                     continue
                 item_workspace.mkdir()
             except OSError:
                 batch = batch.fail_item(item.id, _INVALID_OUTPUT_FAILURE)
+                _notify(on_progress, batch)
                 continue
             staged_output = item_workspace / final_output.name
             try:
@@ -256,12 +275,15 @@ def batch_convert_documents(
                 )
             except InvalidConversionRequestError:
                 batch = batch.fail_item(item.id, _INVALID_REQUEST_FAILURE)
+                _notify(on_progress, batch)
                 continue
             except UnsupportedConversionError:
                 batch = batch.fail_item(item.id, _UNSUPPORTED_FORMAT_FAILURE)
+                _notify(on_progress, batch)
                 continue
             except OfficeConversionError:
                 batch = batch.fail_item(item.id, _PROCESSING_FAILURE)
+                _notify(on_progress, batch)
                 continue
             if not _valid_staged_pdf(
                 returned_output,
@@ -269,23 +291,28 @@ def batch_convert_documents(
                 item_workspace=item_workspace,
             ):
                 batch = batch.fail_item(item.id, _INVALID_OUTPUT_FAILURE)
+                _notify(on_progress, batch)
                 continue
             try:
                 os.replace(staged_output, final_output)
             except OSError:
                 batch = batch.fail_item(item.id, _PUBLISH_FAILURE)
+                _notify(on_progress, batch)
                 continue
-            outputs.append(
-                BatchDocumentOutput(
-                    item.id,
-                    position,
-                    item.input_path,
-                    final_output,
-                    source_format,
-                )
+            outputs[position] = BatchDocumentOutput(
+                item.id,
+                position,
+                item.input_path,
+                final_output,
+                source_format,
             )
             batch = batch.complete_item(item.id, BatchItemResult(final_output.name))
-        return BatchDocumentResult(batch, request.output_directory, tuple(outputs))
+            _notify(on_progress, batch)
+        return BatchDocumentResult(
+            batch,
+            request.output_directory,
+            tuple(outputs[position] for position in sorted(outputs)),
+        )
     finally:
         if temporary_directory is not None:
             try:
@@ -315,6 +342,71 @@ def _validate_output_directory(output_directory: Path) -> None:
         valid = False
     if not valid:
         raise InvalidBatchDefinitionError("Batch output directory must exist and be a directory.")
+
+
+def _notify(callback: BatchProgressCallback | None, batch: Batch) -> None:
+    if callback is not None:
+        callback(batch)
+
+
+def _prepare_document_attempt(
+    request: BatchDocumentConvertRequest,
+    batch_request: BatchRequest,
+    recover_from: BatchDocumentResult | None,
+) -> tuple[Batch, dict[int, BatchDocumentOutput]]:
+    if recover_from is None:
+        return Batch(batch_request), {}
+    if not isinstance(recover_from, BatchDocumentResult):
+        raise TypeError("recover_from must be a BatchDocumentResult")
+    previous = recover_from.batch
+    if (
+        previous.id != batch_request.id
+        or previous.operation != batch_request.operation
+        or previous.request.items != batch_request.items
+        or not _paths_resolve_equal(recover_from.output_directory, request.output_directory)
+        or not any(
+            item.status in {BatchItemStatus.FAILED, BatchItemStatus.CANCELLED}
+            for item in previous.items
+        )
+    ):
+        raise InvalidBatchDefinitionError("Document recovery state does not match the request.")
+    outputs: dict[int, BatchDocumentOutput] = {}
+    for output in recover_from.outputs:
+        source = request.items[output.position]
+        if not _valid_preserved_pdf(output, source=source, request=request):
+            raise InvalidBatchDefinitionError("Preserved document output is not trustworthy.")
+        outputs[output.position] = output
+    return previous.recover_items(), outputs
+
+
+def _valid_preserved_pdf(
+    output: BatchDocumentOutput,
+    *,
+    source: BatchDocumentInput,
+    request: BatchDocumentConvertRequest,
+) -> bool:
+    expected = request.output_directory / _output_name(source.input_path, output.position)
+    expected_source_format = _FORMAT_BY_SUFFIX.get(source.input_path.suffix.lower())
+    try:
+        node = output.output_path.lstat()
+        if (
+            output.item_id != source.id
+            or output.input_path.resolve(strict=False) != source.input_path.resolve(strict=False)
+            or output.output_path.resolve(strict=False) != expected.resolve(strict=False)
+            or output.source_format is not expected_source_format
+            or output.target_format is not DocumentFormat.PDF
+            or stat.S_ISLNK(node.st_mode)
+            or not stat.S_ISREG(node.st_mode)
+            or node.st_size == 0
+            or not output.output_path.resolve(strict=True).is_relative_to(
+                request.output_directory.resolve(strict=True)
+            )
+        ):
+            return False
+        with output.output_path.open("rb") as stream:
+            return stream.read(5) == b"%PDF-"
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
 def _output_name(input_path: Path, position: int) -> str:

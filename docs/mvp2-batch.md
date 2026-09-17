@@ -3,9 +3,9 @@
 ## Purpose
 
 Commit 51 established framework-independent, immutable state for one ordered multi-item
-operation. Commits 52 and 53 use that state for reusable Python batch image and Office-document
-workflows, plus safe packaging of successful outputs, while keeping the batch layer independent
-of HTTP, browser, job, and persistence concerns.
+operation. Commits 52 and 53 added reusable image and Office workflows and safe ZIP packaging.
+Commit 54 completes the current MVP2 roadmap with item-granular progress, cooperative
+cancellation, selective recovery, process-local HTTP execution sessions, and a browser workflow.
 
 ## Relationship to jobs
 
@@ -21,10 +21,12 @@ unchanged, and no duplicate job system is introduced.
 PENDING -> RUNNING -> COMPLETED
     |          |
     +----------+----> FAILED
+    |
+    +---------------> CANCELLED
 ```
 
-An item may fail while pending if validation discovers a problem before execution. Completed and
-failed items are terminal. A completed item carries one safe `BatchItemResult`; a failed item
+An item may fail while pending if validation discovers a problem before execution. Completed,
+failed, and cancelled items are terminal. A completed item carries one safe `BatchItemResult`; a failed item
 carries one safe `BatchItemFailure`. Every transition returns a new item and batch snapshot,
 leaving earlier snapshots unchanged. Multiple items may be running at the same time; this model
 does not schedule them.
@@ -42,7 +44,8 @@ position.
 - `RUNNING`: some work has started or failed, and at least one item is not terminal.
 - `COMPLETED`: every item completed.
 - `FAILED`: every item failed.
-- `PARTIAL`: all items are terminal, with at least one completion and one failure.
+- `CANCELLED`: every item was cancelled before starting.
+- `PARTIAL`: all items are terminal and their completed, failed, and cancelled outcomes are mixed.
 
 Failure of one item does not automatically fail another item or the whole batch. The image
 workflows continue after expected item failures.
@@ -94,20 +97,55 @@ workspace beside the requested destination, reopened to verify its exact member 
 integrity, and only then atomically published. Existing destinations therefore survive expected
 creation, validation, and publication failures.
 
-## Progress foundation
+## Progress and execution control
 
 `Batch.summary` derives a fresh immutable `BatchSummary` from each snapshot. It records exact
-`pending`, `running`, `completed`, `failed`, `processed`, and `remaining` counts alongside the
-total and aggregate status. `processed = completed + failed`, `remaining = pending + running`,
-and `processed + remaining = total`. Counts are derived rather than independently stored.
-There is no percentage, polling, persistence, cancellation, or retry state yet.
+`pending`, `running`, `completed`, `failed`, `cancelled`, `processed`, and `remaining` counts
+alongside the total and aggregate status. `processed = completed + failed + cancelled`,
+`remaining = pending + running`, and `processed + remaining = total`. The item-granular integer
+`progress_percent` is `processed * 100 // total`; no fake intra-file progress is estimated.
+
+Runners accept optional keyword-only cancellation tokens, progress observers, and typed prior
+results. Cancellation is cooperative: an item already running may finish normally, while pending
+items are cancelled before they start. Recovery creates a new immutable attempt snapshot, resets
+only failed and cancelled items, and preserves IDs, positions, deterministic names, and validated
+successful outputs. Missing, linked, relocated, or malformed preserved outputs cause recovery to
+be rejected instead of trusted.
+
+## Process-local sessions and browser workflow
+
+The FastAPI adapter owns a bounded `ThreadPoolExecutor` and an instance-scoped, thread-safe
+session store. Creation routes return `202 Accepted`; clients poll the stable BatchId URL, request
+cooperative cancellation or recovery on that same identity, and download a ZIP containing only
+successful outputs. Recovery increments an attempt counter. A packaging-only failure retries ZIP
+creation without reprocessing valid outputs, while an uncertain execution failure restarts the
+original request.
+
+Each session retains an isolated workspace containing per-item upload directories, deterministic
+outputs, and the current archive. Terminal and error sessions expire after a configurable TTL
+(one hour by default), and shutdown requests cancellation, joins workers, and removes all retained
+workspaces. Status JSON exposes safe descriptors and failure messages only, never filesystem
+paths, temporary names, raw converter errors, commands, or tracebacks.
+
+The browser catalog includes batch image convert, resize, compress, and mixed Office-to-PDF
+tools. Their shared workspace preserves selected order, displays server-derived progress and
+ordered item states, polls without overlapping requests, and offers Cancel, selective Retry, and
+ZIP download actions. A polling failure retains the known BatchId and last valid snapshot so the
+user can retry status rather than starting duplicate work.
+
+These sessions and recovery records are intentionally process-local. They do not survive a server
+or deployment restart, routing to another process, or session TTL expiry. This is not durable or
+distributed workflow orchestration.
 
 ## Deliberate exclusions and roadmap
 
-The current batch foundation adds no API, browser, CLI, JobManager integration, persistence,
-queue, workers, cancellation, retry, or recovery. Processing and packaging remain sequential.
+The implementation adds no Redis, database persistence, distributed queue or workers, WebSockets,
+SSE, forced converter termination, authentication, or parallel processing within one batch. The
+generic Job lifecycle remains unchanged.
 
 1. Commit 51 — batch-processing model — complete.
 2. Commit 52 — multi-file batch image processing — complete.
-3. Commit 53 — batch document processing and ZIP — complete/current.
-4. Commit 54 — progress/status UX, cancellation, and error recovery.
+3. Commit 53 — batch document processing and ZIP — complete.
+4. Commit 54 — progress/status UX, cancellation, and error recovery — complete/current.
+
+The current MVP2 batch roadmap is complete.

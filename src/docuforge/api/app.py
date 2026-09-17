@@ -1,8 +1,11 @@
 """FastAPI application construction for the DocuForge HTTP adapter."""
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from docuforge.api.batches import BatchExecutionService
 from docuforge.api.config import ApiSettings
 from docuforge.api.errors import register_error_handlers
 from docuforge.api.observability import REQUEST_ID_HEADER, ProductionMiddleware
@@ -24,6 +27,16 @@ def create_app(
     docs_url = "/docs" if resolved_settings.docs_enabled else None
     redoc_url = "/redoc" if resolved_settings.docs_enabled else None
     openapi_url = "/openapi.json" if resolved_settings.docs_enabled else None
+    batch_service = BatchExecutionService(
+        office_engine_factory=office_engine_factory,
+        max_workers=resolved_settings.batch_max_workers,
+        terminal_ttl_seconds=resolved_settings.batch_terminal_ttl_seconds,
+    )
+
+    @asynccontextmanager
+    async def lifespan(_application: FastAPI):
+        yield
+        batch_service.shutdown()
 
     application = FastAPI(
         title=resolved_settings.application_name,
@@ -31,6 +44,7 @@ def create_app(
         docs_url=docs_url,
         redoc_url=redoc_url,
         openapi_url=openapi_url,
+        lifespan=lifespan,
     )
     if resolved_settings.cors_allowed_origins:
         application.add_middleware(
@@ -49,8 +63,10 @@ def create_app(
         create_api_router(
             resolved_settings, office_engine_factory=office_engine_factory,
             ocr_engine_factory=ocr_engine_factory,
+            batch_service=batch_service,
         )
     )
+    application.state.batch_service = batch_service
     return application
 
 
