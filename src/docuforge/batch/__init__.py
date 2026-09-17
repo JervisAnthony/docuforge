@@ -1,5 +1,13 @@
 """Public immutable batch-processing domain API."""
 
+from docuforge.batch.archive import BatchArchiveResult, package_batch_outputs
+from docuforge.batch.document import (
+    BatchDocumentConvertRequest,
+    BatchDocumentInput,
+    BatchDocumentOutput,
+    BatchDocumentResult,
+    batch_convert_documents,
+)
 from docuforge.batch.exceptions import (
     BatchError,
     BatchItemNotFoundError,
@@ -34,6 +42,11 @@ from docuforge.batch.models import (
 
 __all__ = [
     "Batch",
+    "BatchArchiveResult",
+    "BatchDocumentConvertRequest",
+    "BatchDocumentInput",
+    "BatchDocumentOutput",
+    "BatchDocumentResult",
     "BatchError",
     "BatchId",
     "BatchImageCompressRequest",
@@ -56,6 +69,8 @@ __all__ = [
     "InvalidBatchDefinitionError",
     "InvalidBatchTransitionError",
     "batch_compress_images",
+    "batch_convert_documents",
     "batch_convert_images",
     "batch_resize_images",
+    "package_batch_outputs",
 ]

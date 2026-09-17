@@ -3,8 +3,9 @@
 ## Purpose
 
 Commit 51 established framework-independent, immutable state for one ordered multi-item
-operation. Commit 52 now uses that state for reusable Python batch image workflows while keeping
-the batch layer independent of HTTP, browser, job, and persistence concerns.
+operation. Commits 52 and 53 use that state for reusable Python batch image and Office-document
+workflows, plus safe packaging of successful outputs, while keeping the batch layer independent
+of HTTP, browser, job, and persistence concerns.
 
 ## Relationship to jobs
 
@@ -65,8 +66,33 @@ before atomic publication into the caller's existing output directory. A success
 its deterministic destination; a failed item leaves any existing destination untouched. The
 temporary workspace is removed afterward.
 
-Commit 52 produces a directory of successful images. ZIP packaging belongs to Commit 53, and no
-batch API or browser workflow is exposed yet.
+## Multi-file document processing
+
+The document workflow accepts a heterogeneous ordered tuple of DOCX, PPTX, and XLSX inputs and
+routes each item through the existing Office-to-PDF converter layer with an injected
+`OfficeConversionEngine`. It uses the stable `office.to_pdf` operation key and the same immutable
+item lifecycle and partial-success rules as image processing.
+
+Successful PDFs use position-preserving names such as `0001-report.pdf` and
+`0003-financials.pdf`. Each converter writes through its existing isolated workflow into an
+item-specific outer batch workspace. The batch boundary independently checks the returned path,
+regular non-symlink node, containment, nonempty content, and `%PDF-` signature before atomically
+publishing it. Expected request, format, engine, validation, and publication failures remain safe
+per-item failures; unexpected programming errors propagate.
+
+## ZIP packaging
+
+`package_batch_outputs` packages the successful outputs from either a `BatchImageResult` or a
+`BatchDocumentResult`. Partial results retain their original deterministic names and order, while
+failed items contribute no member and are never renumbered. An all-failed result is valid but is
+rejected for packaging rather than producing an empty ZIP.
+
+Before writing, the archive layer revalidates each output against its result metadata and current
+filesystem state: members must be unique safe basenames, files must be regular non-symlinks, and
+resolved paths must remain within the result output directory. The ZIP is created in a temporary
+workspace beside the requested destination, reopened to verify its exact member sequence and
+integrity, and only then atomically published. Existing destinations therefore survive expected
+creation, validation, and publication failures.
 
 ## Progress foundation
 
@@ -78,10 +104,10 @@ There is no percentage, polling, persistence, cancellation, or retry state yet.
 
 ## Deliberate exclusions and roadmap
 
-The current batch foundation adds no ZIP archive, API, browser, CLI, JobManager integration,
-persistence, queue, workers, cancellation, retry, or recovery.
+The current batch foundation adds no API, browser, CLI, JobManager integration, persistence,
+queue, workers, cancellation, retry, or recovery. Processing and packaging remain sequential.
 
 1. Commit 51 — batch-processing model — complete.
-2. Commit 52 — multi-file batch image processing — complete/current.
-3. Commit 53 — batch document processing and ZIP.
+2. Commit 52 — multi-file batch image processing — complete.
+3. Commit 53 — batch document processing and ZIP — complete/current.
 4. Commit 54 — progress/status UX, cancellation, and error recovery.
