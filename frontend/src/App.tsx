@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import type { ApiHealth } from './api/types'
+import type { ApiClient } from './api/client'
+import { BatchToolWorkspace } from './batch/BatchToolWorkspace'
 import { AppHeader } from './components/AppHeader'
 import { ToolSection } from './components/ToolSection'
 import { ImageToolWorkspace } from './image/ImageToolWorkspace'
@@ -18,9 +20,10 @@ interface AppProps {
   imageClient?: ImageRequestClient
   officeClient?: MultipartRequestClient
   ocrClient?: MultipartRequestClient
+  batchClient?: ApiClient
 }
 
-function App({ checkHealth, pdfClient, imageClient, officeClient, ocrClient }: AppProps) {
+function App({ checkHealth, pdfClient, imageClient, officeClient, ocrClient, batchClient }: AppProps) {
   const [selectedTool, setSelectedTool] = useState<ToolId | null>(null)
   const selectedDefinition = selectedTool ? toolById(selectedTool) : null
 
@@ -28,7 +31,13 @@ function App({ checkHealth, pdfClient, imageClient, officeClient, ocrClient }: A
     <div className="app-shell">
       <AppHeader checkHealth={checkHealth} />
       <main id="main-content">
-        {selectedDefinition?.category === 'pdf' ? (
+        {selectedDefinition?.category === 'batch' ? (
+          <BatchToolWorkspace
+            toolId={selectedDefinition.id}
+            onBack={() => setSelectedTool(null)}
+            client={batchClient}
+          />
+        ) : selectedDefinition?.category === 'pdf' ? (
           <PdfToolWorkspace
             toolId={selectedDefinition.id}
             onBack={() => setSelectedTool(null)}
@@ -64,6 +73,12 @@ function App({ checkHealth, pdfClient, imageClient, officeClient, ocrClient }: A
             </section>
 
             <div className="catalog">
+              <ToolSection
+                title="Batch tools"
+                description="Process multiple files with tracked progress, cancellation, recovery, and one ZIP download."
+                tools={toolsForCategory('batch')}
+                onOpen={setSelectedTool}
+              />
               <ToolSection
                 title="PDF tools"
                 description="Organize, refine, and transform PDF documents while keeping every operation focused."

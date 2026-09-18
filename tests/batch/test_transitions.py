@@ -35,6 +35,7 @@ def assert_counts(batch: Batch, expected: tuple[int, int, int, int]) -> None:
     assert summary.running_count == batch.running_count == running
     assert summary.completed_count == batch.completed_count == completed
     assert summary.failed_count == batch.failed_count == failed
+    assert summary.cancelled_count == batch.cancelled_count == 0
     assert summary.processed_count == batch.processed_count == completed + failed
     assert summary.remaining_count == batch.remaining_count == pending + running
     assert summary.processed_count + summary.remaining_count == summary.total_count
@@ -167,6 +168,7 @@ def test_summary_rejects_invalid_counts_and_status() -> None:
     for changes in (
         {"total_count": 0}, {"pending_count": -1}, {"pending_count": True},
         {"processed_count": 1}, {"remaining_count": 2},
+        {"cancelled_count": 1},
         {"status": BatchStatus.COMPLETED}, {"status": "pending"},
     ):
         with pytest.raises(InvalidBatchDefinitionError):

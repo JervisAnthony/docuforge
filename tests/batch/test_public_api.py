@@ -5,12 +5,12 @@ from docuforge import batch, converters, jobs
 
 def test_public_batch_api_is_explicit_and_does_not_pollute_other_packages() -> None:
     expected = {
-        "Batch", "BatchArchiveResult", "BatchDocumentConvertRequest", "BatchDocumentInput",
+        "Batch", "BatchArchiveResult", "BatchCancellationToken", "BatchDocumentConvertRequest", "BatchDocumentInput",
         "BatchDocumentOutput", "BatchDocumentResult", "BatchError", "BatchId",
         "BatchImageCompressRequest", "BatchImageConvertRequest", "BatchImageInput", "BatchImageOutput",
         "BatchImageResizeRequest", "BatchImageResult", "BatchItem", "BatchItemFailure",
         "BatchItemId", "BatchItemNotFoundError", "BatchItemRequest", "BatchItemResult",
-        "BatchItemStatus", "BatchProcessingError", "BatchRequest", "BatchStatus",
+        "BatchItemStatus", "BatchProcessingError", "BatchProgressCallback", "BatchRequest", "BatchStatus",
         "BatchSummary", "InvalidBatchDefinitionError", "InvalidBatchTransitionError",
         "batch_compress_images", "batch_convert_documents", "batch_convert_images",
         "batch_resize_images", "package_batch_outputs",

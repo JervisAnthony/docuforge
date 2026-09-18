@@ -1,6 +1,7 @@
 """Public immutable batch-processing domain API."""
 
 from docuforge.batch.archive import BatchArchiveResult, package_batch_outputs
+from docuforge.batch.control import BatchCancellationToken, BatchProgressCallback
 from docuforge.batch.document import (
     BatchDocumentConvertRequest,
     BatchDocumentInput,
@@ -43,6 +44,7 @@ from docuforge.batch.models import (
 __all__ = [
     "Batch",
     "BatchArchiveResult",
+    "BatchCancellationToken",
     "BatchDocumentConvertRequest",
     "BatchDocumentInput",
     "BatchDocumentOutput",
@@ -63,6 +65,7 @@ __all__ = [
     "BatchItemResult",
     "BatchItemStatus",
     "BatchProcessingError",
+    "BatchProgressCallback",
     "BatchRequest",
     "BatchStatus",
     "BatchSummary",

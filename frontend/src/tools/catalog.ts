@@ -2,6 +2,38 @@ import type { ToolDefinition } from './types'
 
 export const toolCatalog = [
   {
+    id: 'batch-image-convert',
+    category: 'batch',
+    title: 'Batch image convert',
+    description: 'Convert multiple images while tracking each file independently.',
+    endpoint: '/api/v1/batches/images/convert',
+    interfaceStatus: 'operational',
+  },
+  {
+    id: 'batch-image-resize',
+    category: 'batch',
+    title: 'Batch image resize',
+    description: 'Resize multiple images with progress and per-file status.',
+    endpoint: '/api/v1/batches/images/resize',
+    interfaceStatus: 'operational',
+  },
+  {
+    id: 'batch-image-compress',
+    category: 'batch',
+    title: 'Batch image compress',
+    description: 'Compress multiple images and download successful results together.',
+    endpoint: '/api/v1/batches/images/compress',
+    interfaceStatus: 'operational',
+  },
+  {
+    id: 'batch-office-to-pdf',
+    category: 'batch',
+    title: 'Batch Office to PDF',
+    description: 'Convert mixed Word, PowerPoint, and Excel files to PDF as one tracked batch.',
+    endpoint: '/api/v1/batches/office/to-pdf',
+    interfaceStatus: 'operational',
+  },
+  {
     id: 'pdf-merge',
     category: 'pdf',
     title: 'Merge PDF',

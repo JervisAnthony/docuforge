@@ -12,6 +12,7 @@ from typing import Any
 
 from PIL import Image, UnidentifiedImageError
 
+from docuforge.batch.control import BatchCancellationToken, BatchProgressCallback
 from docuforge.batch.exceptions import BatchProcessingError, InvalidBatchDefinitionError
 from docuforge.batch.models import (
     Batch,
@@ -266,7 +267,13 @@ class BatchImageResult:
             raise InvalidBatchDefinitionError("Every completed image item requires one output.")
 
 
-def batch_convert_images(request: BatchImageConvertRequest) -> BatchImageResult:
+def batch_convert_images(
+    request: BatchImageConvertRequest,
+    *,
+    cancellation: BatchCancellationToken | None = None,
+    on_progress: BatchProgressCallback | None = None,
+    recover_from: BatchImageResult | None = None,
+) -> BatchImageResult:
     """Convert an ordered image batch while isolating expected item failures."""
     if not isinstance(request, BatchImageConvertRequest):
         raise TypeError("request must be a BatchImageConvertRequest")
@@ -276,10 +283,19 @@ def batch_convert_images(request: BatchImageConvertRequest) -> BatchImageResult:
         request_builder=lambda item, output: ImageConvertPathRequest(item.input_path, output),
         processor=convert_image_path,
         expected_result_type=ImageConvertPathResult,
+        cancellation=cancellation,
+        on_progress=on_progress,
+        recover_from=recover_from,
     )
 
 
-def batch_resize_images(request: BatchImageResizeRequest) -> BatchImageResult:
+def batch_resize_images(
+    request: BatchImageResizeRequest,
+    *,
+    cancellation: BatchCancellationToken | None = None,
+    on_progress: BatchProgressCallback | None = None,
+    recover_from: BatchImageResult | None = None,
+) -> BatchImageResult:
     """Resize an ordered image batch while isolating expected item failures."""
     if not isinstance(request, BatchImageResizeRequest):
         raise TypeError("request must be a BatchImageResizeRequest")
@@ -295,10 +311,19 @@ def batch_resize_images(request: BatchImageResizeRequest) -> BatchImageResult:
         ),
         processor=resize_image_path,
         expected_result_type=ImageResizePathResult,
+        cancellation=cancellation,
+        on_progress=on_progress,
+        recover_from=recover_from,
     )
 
 
-def batch_compress_images(request: BatchImageCompressRequest) -> BatchImageResult:
+def batch_compress_images(
+    request: BatchImageCompressRequest,
+    *,
+    cancellation: BatchCancellationToken | None = None,
+    on_progress: BatchProgressCallback | None = None,
+    recover_from: BatchImageResult | None = None,
+) -> BatchImageResult:
     """Compress an ordered image batch while isolating expected item failures."""
     if not isinstance(request, BatchImageCompressRequest):
         raise TypeError("request must be a BatchImageCompressRequest")
@@ -313,6 +338,9 @@ def batch_compress_images(request: BatchImageCompressRequest) -> BatchImageResul
         ),
         processor=compress_image_path,
         expected_result_type=ImageCompressPathResult,
+        cancellation=cancellation,
+        on_progress=on_progress,
+        recover_from=recover_from,
     )
 
 
@@ -323,19 +351,22 @@ def _process_image_batch(
     request_builder: Callable[[BatchImageInput, Path], object],
     processor: Callable[[object], object],
     expected_result_type: type,
+    cancellation: BatchCancellationToken | None,
+    on_progress: BatchProgressCallback | None,
+    recover_from: BatchImageResult | None,
 ) -> BatchImageResult:
+    _validate_controls(cancellation, on_progress)
     _validate_output_directory(request.output_directory)
-    batch = Batch(
-        BatchRequest(
-            request.batch_id,
-            operation,
-            tuple(
-                BatchItemRequest(item.id, position, item.descriptor)
-                for position, item in enumerate(request.items)
-            ),
-        )
+    batch_request = BatchRequest(
+        request.batch_id,
+        operation,
+        tuple(
+            BatchItemRequest(item.id, position, item.descriptor)
+            for position, item in enumerate(request.items)
+        ),
     )
-    outputs: list[BatchImageOutput] = []
+    batch, outputs = _prepare_image_attempt(request, batch_request, recover_from)
+    _notify(on_progress, batch)
     temporary_directory: TemporaryDirectory[str] | None = None
     try:
         try:
@@ -346,7 +377,14 @@ def _process_image_batch(
             raise BatchProcessingError("Unable to process the image batch.") from error
         workspace = Path(temporary_directory.name)
         for position, item in enumerate(request.items):
+            if batch.items[position].status is BatchItemStatus.COMPLETED:
+                continue
+            if cancellation is not None and cancellation.cancellation_requested:
+                batch = batch.cancel_pending_items()
+                _notify(on_progress, batch)
+                break
             batch = batch.start_item(item.id)
+            _notify(on_progress, batch)
             item_workspace = workspace / f"item-{position + 1:04d}"
             final_output = request.output_directory / _output_name(
                 item.input_path, position, request.target_format
@@ -357,22 +395,27 @@ def _process_image_batch(
                     for source in request.items
                 ):
                     batch = batch.fail_item(item.id, _INVALID_REQUEST_FAILURE)
+                    _notify(on_progress, batch)
                     continue
                 item_workspace.mkdir()
             except OSError:
                 batch = batch.fail_item(item.id, _INVALID_OUTPUT_FAILURE)
+                _notify(on_progress, batch)
                 continue
             staged_output = item_workspace / final_output.name
             try:
                 converter_result = processor(request_builder(item, staged_output))
             except InvalidConversionRequestError:
                 batch = batch.fail_item(item.id, _INVALID_REQUEST_FAILURE)
+                _notify(on_progress, batch)
                 continue
             except UnsupportedConversionError:
                 batch = batch.fail_item(item.id, _UNSUPPORTED_FAILURE)
+                _notify(on_progress, batch)
                 continue
             except ImageProcessingError:
                 batch = batch.fail_item(item.id, _PROCESSING_FAILURE)
+                _notify(on_progress, batch)
                 continue
             if not _valid_staged_result(
                 converter_result,
@@ -383,11 +426,13 @@ def _process_image_batch(
                 target_format=request.target_format,
             ):
                 batch = batch.fail_item(item.id, _INVALID_OUTPUT_FAILURE)
+                _notify(on_progress, batch)
                 continue
             try:
                 os.replace(staged_output, final_output)
             except OSError:
                 batch = batch.fail_item(item.id, _PUBLISH_FAILURE)
+                _notify(on_progress, batch)
                 continue
             output = BatchImageOutput(
                 item.id,
@@ -397,9 +442,14 @@ def _process_image_batch(
                 converter_result.source_format,
                 converter_result.target_format,
             )
-            outputs.append(output)
+            outputs[position] = output
             batch = batch.complete_item(item.id, BatchItemResult(final_output.name))
-        return BatchImageResult(batch, request.output_directory, tuple(outputs))
+            _notify(on_progress, batch)
+        return BatchImageResult(
+            batch,
+            request.output_directory,
+            tuple(outputs[position] for position in sorted(outputs)),
+        )
     finally:
         if temporary_directory is not None:
             try:
@@ -415,6 +465,91 @@ def _validate_output_directory(output_directory: Path) -> None:
         valid = False
     if not valid:
         raise InvalidBatchDefinitionError("Batch output directory must exist and be a directory.")
+
+
+def _validate_controls(
+    cancellation: BatchCancellationToken | None,
+    on_progress: BatchProgressCallback | None,
+) -> None:
+    if cancellation is not None and not isinstance(cancellation, BatchCancellationToken):
+        raise TypeError("cancellation must be a BatchCancellationToken")
+    if on_progress is not None and not callable(on_progress):
+        raise TypeError("on_progress must be callable")
+
+
+def _notify(callback: BatchProgressCallback | None, batch: Batch) -> None:
+    if callback is not None:
+        callback(batch)
+
+
+def _prepare_image_attempt(
+    request: BatchImageConvertRequest | BatchImageResizeRequest | BatchImageCompressRequest,
+    batch_request: BatchRequest,
+    recover_from: BatchImageResult | None,
+) -> tuple[Batch, dict[int, BatchImageOutput]]:
+    if recover_from is None:
+        return Batch(batch_request), {}
+    if not isinstance(recover_from, BatchImageResult):
+        raise TypeError("recover_from must be a BatchImageResult")
+    previous = recover_from.batch
+    if (
+        previous.id != batch_request.id
+        or previous.operation != batch_request.operation
+        or previous.request.items != batch_request.items
+        or not _paths_resolve_equal(recover_from.output_directory, request.output_directory)
+        or not any(
+            item.status in {BatchItemStatus.FAILED, BatchItemStatus.CANCELLED}
+            for item in previous.items
+        )
+    ):
+        raise InvalidBatchDefinitionError("Image recovery state does not match the request.")
+    outputs: dict[int, BatchImageOutput] = {}
+    for output in recover_from.outputs:
+        source = request.items[output.position]
+        if not _valid_preserved_image(output, source=source, request=request):
+            raise InvalidBatchDefinitionError("Preserved image output is not trustworthy.")
+        outputs[output.position] = output
+    return previous.recover_items(), outputs
+
+
+def _valid_preserved_image(
+    output: BatchImageOutput,
+    *,
+    source: BatchImageInput,
+    request: BatchImageConvertRequest | BatchImageResizeRequest | BatchImageCompressRequest,
+) -> bool:
+    expected = request.output_directory / _output_name(
+        source.input_path, output.position, request.target_format
+    )
+    try:
+        node = output.output_path.lstat()
+        if (
+            output.item_id != source.id
+            or output.input_path.resolve(strict=False) != source.input_path.resolve(strict=False)
+            or output.output_path.resolve(strict=False) != expected.resolve(strict=False)
+            or output.target_format is not request.target_format
+            or output.source_format not in SUPPORTED_RASTER_FORMATS
+            or stat.S_ISLNK(node.st_mode)
+            or not stat.S_ISREG(node.st_mode)
+            or not output.output_path.resolve(strict=True).is_relative_to(
+                request.output_directory.resolve(strict=True)
+            )
+        ):
+            return False
+        with Image.open(output.output_path) as image:
+            image.load()
+            actual_format = _FORMAT_BY_PILLOW_NAME.get(image.format or "")
+            frame_count = getattr(image, "n_frames", 1)
+        return actual_format is request.target_format and frame_count == 1
+    except (
+        OSError,
+        RuntimeError,
+        ValueError,
+        UnidentifiedImageError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ):
+        return False
 
 
 def _output_name(input_path: Path, position: int, target_format: DocumentFormat) -> str:

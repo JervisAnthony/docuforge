@@ -40,6 +40,8 @@ class ApiSettings:
     upload_chunk_bytes: int = 1024 * 1024
     max_pdf_render_pages: int = 100
     max_pdf_render_pixels_per_page: int = 40_000_000
+    batch_max_workers: int = 2
+    batch_terminal_ttl_seconds: int = 3600
 
     @classmethod
     def from_environment(cls) -> "ApiSettings":
@@ -78,6 +80,8 @@ class ApiSettings:
             "upload_chunk_bytes",
             "max_pdf_render_pages",
             "max_pdf_render_pixels_per_page",
+            "batch_max_workers",
+            "batch_terminal_ttl_seconds",
         )
         for field_name in upload_limit_fields:
             value = getattr(self, field_name)

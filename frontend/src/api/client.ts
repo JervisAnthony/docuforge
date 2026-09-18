@@ -2,6 +2,7 @@ import type {
   ApiErrorPayload,
   ApiHealth,
   ApiMetadata,
+  BatchSnapshot,
   BinaryResponse,
 } from './types'
 
@@ -34,6 +35,11 @@ export interface ApiClient {
   getMetadata(): Promise<ApiMetadata>
   getHealth(): Promise<ApiHealth>
   postMultipartForBlob(path: string, formData: FormData): Promise<BinaryResponse>
+  createBatch(path: string, formData: FormData): Promise<BatchSnapshot>
+  getBatchStatus(batchId: string): Promise<BatchSnapshot>
+  cancelBatch(batchId: string): Promise<BatchSnapshot>
+  recoverBatch(batchId: string): Promise<BatchSnapshot>
+  downloadBatch(batchId: string): Promise<BinaryResponse>
 }
 
 export function createApiClient(
@@ -56,8 +62,12 @@ export function createApiClient(
   async function requestJson<T>(
     path: string,
     validate: (value: unknown) => value is T,
+    init?: RequestInit,
   ): Promise<T> {
-    const response = await request(path, { headers: { Accept: 'application/json' } })
+    const response = await request(path, {
+      ...init,
+      headers: { Accept: 'application/json', ...init?.headers },
+    })
     if (!response.ok) {
       throw await createHttpError(response)
     }
@@ -75,6 +85,24 @@ export function createApiClient(
   return {
     getMetadata: () => requestJson('/api/v1', isApiMetadata),
     getHealth: () => requestJson('/api/v1/health', isApiHealth),
+    createBatch: (path, formData) =>
+      requestJson(path, isBatchSnapshot, { method: 'POST', body: formData }),
+    getBatchStatus: (batchId) => requestJson(batchPath(batchId), isBatchSnapshot),
+    cancelBatch: (batchId) =>
+      requestJson(`${batchPath(batchId)}/cancel`, isBatchSnapshot, { method: 'POST' }),
+    recoverBatch: (batchId) =>
+      requestJson(`${batchPath(batchId)}/recover`, isBatchSnapshot, { method: 'POST' }),
+    async downloadBatch(batchId) {
+      const response = await request(`${batchPath(batchId)}/download`, {
+        headers: { Accept: 'application/zip' },
+      })
+      if (!response.ok) throw await createHttpError(response)
+      return {
+        blob: await response.blob(),
+        contentType: response.headers.get('content-type'),
+        contentDisposition: response.headers.get('content-disposition'),
+      }
+    },
     async postMultipartForBlob(path, formData) {
       const response = await request(path, {
         method: 'POST',
@@ -153,6 +181,67 @@ function isApiErrorPayload(value: unknown): value is ApiErrorPayload {
     isRecord(value) &&
     typeof value.code === 'string' &&
     typeof value.message === 'string'
+  )
+}
+
+function batchPath(batchId: string): string {
+  return `/api/v1/batches/${encodeURIComponent(batchId)}`
+}
+
+const ITEM_STATUSES = new Set(['pending', 'running', 'completed', 'failed', 'cancelled'])
+const BATCH_STATUSES = new Set(['pending', 'running', 'completed', 'failed', 'partial', 'cancelled'])
+const BATCH_PHASES = new Set(['queued', 'processing', 'cancelling', 'packaging', 'ready', 'error'])
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
+
+function isFailure(value: unknown): value is { code: string; message: string } {
+  return isRecord(value) && typeof value.code === 'string' && typeof value.message === 'string'
+}
+
+function isNullableFailure(value: unknown): boolean {
+  return value === null || isFailure(value)
+}
+
+function isBatchItem(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    isNonNegativeInteger(value.position) &&
+    typeof value.descriptor === 'string' &&
+    typeof value.status === 'string' &&
+    ITEM_STATUSES.has(value.status) &&
+    (value.result_descriptor === null || typeof value.result_descriptor === 'string') &&
+    isNullableFailure(value.failure)
+  )
+}
+
+function isBatchSummary(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    ['total', 'pending', 'running', 'completed', 'failed', 'cancelled', 'processed', 'remaining'].every(
+      (key) => isNonNegativeInteger(value[key]),
+    )
+  )
+}
+
+function isBatchSnapshot(value: unknown): value is BatchSnapshot {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.operation === 'string' &&
+    isNonNegativeInteger(value.attempt) && value.attempt > 0 &&
+    typeof value.phase === 'string' && BATCH_PHASES.has(value.phase) &&
+    typeof value.status === 'string' && BATCH_STATUSES.has(value.status) &&
+    isNonNegativeInteger(value.progress_percent) && value.progress_percent <= 100 &&
+    typeof value.cancellation_requested === 'boolean' &&
+    isBatchSummary(value.summary) &&
+    Array.isArray(value.items) && value.items.every(isBatchItem) &&
+    isNullableFailure(value.session_error) &&
+    typeof value.can_cancel === 'boolean' &&
+    typeof value.can_recover === 'boolean' &&
+    typeof value.can_download === 'boolean'
   )
 }
 
