@@ -26,14 +26,23 @@ def create_api_router(
     """Build the versioned router tree for one application instance."""
     router = APIRouter()
     if settings.api_prefix == "/":
-        router.include_router(create_system_router(settings, metadata_path="/"))
+        router.include_router(create_system_router(
+            settings,
+            office_engine_factory=office_engine_factory,
+            ocr_engine_factory=ocr_engine_factory,
+            metadata_path="/",
+        ))
         router.include_router(create_pdf_router(settings))
         router.include_router(create_image_router(settings))
         router.include_router(create_office_router(settings, engine_factory=office_engine_factory))
         router.include_router(create_ocr_router(settings, engine_factory=ocr_engine_factory))
         router.include_router(create_batch_router(settings, service=batch_service))
     else:
-        router.include_router(create_system_router(settings), prefix=settings.api_prefix)
+        router.include_router(create_system_router(
+            settings,
+            office_engine_factory=office_engine_factory,
+            ocr_engine_factory=ocr_engine_factory,
+        ), prefix=settings.api_prefix)
         router.include_router(create_pdf_router(settings), prefix=settings.api_prefix)
         router.include_router(create_image_router(settings), prefix=settings.api_prefix)
         router.include_router(

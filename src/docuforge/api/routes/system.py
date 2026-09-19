@@ -2,11 +2,25 @@
 
 from fastapi import APIRouter
 
+from docuforge.api.capabilities import probe_runtime_capabilities
 from docuforge.api.config import ApiSettings
-from docuforge.api.schemas import ApiMetadataResponse, HealthResponse, ReadinessResponse
+from docuforge.api.ocr import OcrEngineFactory
+from docuforge.api.office import OfficeEngineFactory
+from docuforge.api.schemas import (
+    ApiMetadataResponse,
+    HealthResponse,
+    ReadinessResponse,
+    RuntimeCapabilitiesResponse,
+)
 
 
-def create_system_router(settings: ApiSettings, *, metadata_path: str = "") -> APIRouter:
+def create_system_router(
+    settings: ApiSettings,
+    *,
+    office_engine_factory: OfficeEngineFactory,
+    ocr_engine_factory: OcrEngineFactory,
+    metadata_path: str = "",
+) -> APIRouter:
     """Build system routes bound to immutable application settings."""
     router = APIRouter()
 
@@ -33,5 +47,13 @@ def create_system_router(settings: ApiSettings, *, metadata_path: str = "") -> A
             service="docuforge",
             version=settings.version,
         )
+
+    @router.get("/capabilities", response_model=RuntimeCapabilitiesResponse)
+    def capabilities() -> RuntimeCapabilitiesResponse:
+        probed = probe_runtime_capabilities(
+            office_engine_factory=office_engine_factory,
+            ocr_engine_factory=ocr_engine_factory,
+        )
+        return RuntimeCapabilitiesResponse.model_validate(probed, from_attributes=True)
 
     return router

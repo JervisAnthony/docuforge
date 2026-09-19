@@ -17,6 +17,8 @@ from uuid import uuid4
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
+from docuforge.ops.runtime_smoke import make_synthetic_docx, make_synthetic_ocr_png
+
 
 class DeploymentSmokeError(RuntimeError):
     """Raised when a production deployment smoke check fails."""
@@ -171,7 +173,7 @@ class ProductionSmokeRunner:
         *,
         frontend_url: str,
         api_url: str,
-        timeout: float = 15.0,
+        timeout: float = 45.0,
         requester: Requester = request_http,
     ) -> None:
         if timeout <= 0:
@@ -186,10 +188,13 @@ class ProductionSmokeRunner:
         checks = (
             ("frontend", self._check_frontend),
             ("readiness", self._check_readiness),
+            ("runtime-capabilities", self._check_runtime_capabilities),
             ("liveness-and-headers", self._check_liveness_and_headers),
             ("cors", self._check_cors),
             ("pdf-merge", self._check_pdf_merge),
             ("image-compression", self._check_image_compression),
+            ("office-docx-to-pdf", self._check_office_docx_to_pdf),
+            ("ocr-image-to-text", self._check_ocr_image_to_text),
         )
         passed: list[str] = []
         for name, check in checks:
@@ -264,6 +269,15 @@ class ProductionSmokeRunner:
         if "x-request-id" not in {part.strip().lower() for part in exposed.split(",")}:
             raise DeploymentSmokeError("API CORS did not expose X-Request-ID")
 
+    def _check_runtime_capabilities(self) -> None:
+        response = self._request("GET", self._api_endpoint("/api/v1/capabilities"))
+        _require_status(response, label="runtime capabilities endpoint")
+        payload = _json_object(response, label="runtime capabilities endpoint")
+        for name in ("office_to_pdf", "ocr"):
+            capability = payload.get(name)
+            if not isinstance(capability, dict) or capability.get("available") is not True:
+                raise DeploymentSmokeError(f"runtime capability {name} is unavailable")
+
     def _check_cors(self) -> None:
         response = self._request(
             "OPTIONS",
@@ -331,6 +345,51 @@ class ProductionSmokeRunner:
                 "image compression workflow returned unexpected output semantics"
             )
 
+    def _check_office_docx_to_pdf(self) -> None:
+        body, content_type = _multipart_body(
+            files=((
+                "file",
+                "runtime-smoke.docx",
+                make_synthetic_docx(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),)
+        )
+        response = self._request(
+            "POST",
+            self._api_endpoint("/api/v1/office/docx-to-pdf"),
+            headers={"Content-Type": content_type},
+            body=body,
+        )
+        _require_status(response, label="Office DOCX-to-PDF workflow")
+        if "application/pdf" not in (_header(response, "Content-Type") or "").lower():
+            raise DeploymentSmokeError("Office workflow did not return application/pdf")
+        if not response.body.startswith(b"%PDF-"):
+            raise DeploymentSmokeError("Office workflow returned an invalid PDF")
+        try:
+            reader = PdfReader(BytesIO(response.body), strict=True)
+            if not reader.pages:
+                raise ValueError
+        except Exception as error:
+            raise DeploymentSmokeError("Office workflow returned an invalid PDF") from error
+
+    def _check_ocr_image_to_text(self) -> None:
+        body, content_type = _multipart_body(
+            files=(("file", "runtime-smoke.png", make_synthetic_ocr_png(), "image/png"),)
+        )
+        response = self._request(
+            "POST",
+            self._api_endpoint("/api/v1/ocr/image-to-text"),
+            headers={"Content-Type": content_type},
+            body=body,
+        )
+        _require_status(response, label="OCR image-to-text workflow")
+        if "text/plain" not in (_header(response, "Content-Type") or "").lower():
+            raise DeploymentSmokeError("OCR workflow did not return text/plain")
+        try:
+            response.body.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise DeploymentSmokeError("OCR workflow did not return valid UTF-8") from error
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the production smoke command-line parser."""
@@ -339,7 +398,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--frontend-url", required=True, help="Public Vercel frontend origin")
     parser.add_argument("--api-url", required=True, help="Public Railway API origin")
-    parser.add_argument("--timeout", type=float, default=15.0, help="Per-request timeout in seconds")
+    parser.add_argument("--timeout", type=float, default=45.0, help="Per-request timeout in seconds")
     return parser
 
 

@@ -141,3 +141,17 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 7
+
+  production-runtime:
+    name: Production runtime image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -t docuforge-runtime-ci .
+      - name: Verify production engines
+        run: docker run --rm docuforge-runtime-ci python -m docuforge.ops.runtime_smoke
+      - name: Verify non-root execution
+        run: test "$(docker run --rm docuforge-runtime-ci id -u)" != "0"

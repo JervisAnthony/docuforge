@@ -29,6 +29,19 @@ class ReadinessResponse(BaseModel):
     version: str
 
 
+class CapabilityResponse(BaseModel):
+    """Safe availability state for one optional runtime feature."""
+
+    available: bool
+
+
+class RuntimeCapabilitiesResponse(BaseModel):
+    """Optional runtime features available to conversion requests."""
+
+    office_to_pdf: CapabilityResponse
+    ocr: CapabilityResponse
+
+
 class ApiErrorResponse(BaseModel):
     """Stable response returned for errors explicitly translated by the API."""
 

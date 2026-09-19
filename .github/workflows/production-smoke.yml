@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   verify:
-    name: Verify deployed MVP1
+    name: Verify deployed DocuForge
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -50,4 +50,4 @@ jobs:
           python -m docuforge.ops.deployment_smoke
           --frontend-url "$DOCUFORGE_FRONTEND_URL"
           --api-url "$DOCUFORGE_API_URL"
-          --timeout 20
+          --timeout 45
