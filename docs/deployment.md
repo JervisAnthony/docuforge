@@ -23,6 +23,12 @@ DOCUFORGE_CORS_ALLOWED_ORIGINS=<your Vercel production origin>
 disables Uvicorn's identifying `Server` header, and replaces duplicate access logs with
 DocuForge's structured request records.
 
+The production image includes the headless LibreOffice Writer, Impress, and Calc components,
+Tesseract with English language data, and baseline DejaVu/Liberation fonts. The API runs as a
+dedicated non-root user. These system packages make the image larger than a Python-only image.
+The **Production runtime image** CI job builds the real image and verifies actual Office and OCR
+execution. Local or non-Docker runs still require the binaries to be installed separately.
+
 For preview deployments, add the exact preview origin to
 `DOCUFORGE_CORS_ALLOWED_ORIGINS` as a comma-separated value. Do not use a wildcard origin for
 the public deployment.
@@ -59,11 +65,15 @@ After both deployments are available:
 
 1. Open the Railway `/api/v1/ready` endpoint and confirm a successful `ready` response.
 2. Open `/api/v1/health` and confirm the liveness response remains healthy.
-3. Confirm the Vercel application reports the API as connected.
-4. Exercise one PDF workflow and one image workflow with synthetic, non-sensitive fixtures.
-5. Confirm the converted output downloads successfully.
-6. Confirm responses include `X-Request-ID` and the defensive response headers.
-7. Confirm an unknown web origin is not granted CORS access.
+3. Open `/api/v1/capabilities` and confirm `office_to_pdf.available` and `ocr.available` are true.
+4. Confirm the Vercel application reports the API as connected.
+5. Exercise PDF merge, image compression, Office DOCX-to-PDF, and OCR image-to-text with
+   synthetic, non-sensitive fixtures.
+6. Confirm the converted outputs download successfully.
+7. Confirm responses include `X-Request-ID` and the defensive response headers.
+8. Confirm an unknown web origin is not granted CORS access.
 
 The deployment remains stateless: uploaded files are processed in request-scoped temporary
 workspaces and are not intentionally persisted by the application.
+Office and OCR processing remains inside the Railway API container and does not use an external
+conversion or OCR service.

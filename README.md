@@ -155,8 +155,9 @@ print(result.output_path)
 The reusable conversion layer covers PDF merge, split, rotation, page removal and extraction, PDF rendering to raster images, image format conversion, aspect-preserving resize, image compression, and ordered images-to-PDF conversion.
 
 The [OCR workflows](docs/mvp2-ocr.md) support image-to-text, scanned-PDF-to-text, and
-scanned-PDF-to-searchable-PDF conversion through Python, HTTP, and browser interfaces. OCR
-requires an available server OCR runtime; the hosted deployment has not been validated with one.
+scanned-PDF-to-searchable-PDF conversion through Python, HTTP, and browser interfaces. The
+production Docker image includes Tesseract with English OCR data; local, non-container installs
+must provide their own Tesseract runtime.
 
 The [batch workflows](docs/mvp2-batch.md) process ordered image or mixed Office uploads with
 item-level progress, cooperative cancellation, selective retry, and ZIP download. Batch sessions
@@ -177,6 +178,7 @@ System endpoints:
 - `GET /api/v1` — API metadata
 - `GET /api/v1/health` — liveness
 - `GET /api/v1/ready` — readiness
+- `GET /api/v1/capabilities` — Office and OCR runtime availability
 
 Interactive documentation is available at `/docs` and `/redoc` in environments where API docs are enabled.
 
@@ -191,7 +193,9 @@ MVP1 uses a split production deployment:
 
 See [`docs/deployment.md`](docs/deployment.md) for environment configuration and [`docs/production-verification.md`](docs/production-verification.md) for live smoke verification.
 
-The manual **Production Smoke** workflow verifies that the deployed API reports the expected release version before exercising the public frontend, readiness/liveness contracts, response headers, CORS, PDF merge, and image compression.
+The manual **Production Smoke** workflow verifies the deployed release identity before exercising
+the public frontend, system contracts, runtime capabilities, PDF/image workflows, Office
+DOCX-to-PDF, and OCR image-to-text.
 
 ## Release quality
 
@@ -202,6 +206,7 @@ The repository CI covers:
 - frontend lint, tests, and production build
 - Python distribution build verification
 - full-stack Chromium E2E workflows
+- production Docker image verification with real LibreOffice and Tesseract conversions
 
 Production verification is intentionally manual because it targets the real public Vercel and Railway origins rather than test infrastructure.
 
@@ -217,12 +222,10 @@ The following are intentionally outside the MVP1 scope:
 
 These are future product decisions, not missing requirements for the current ten-tool MVP.
 
-MVP2 adds browser and API workflows for DOCX, PPTX, and XLSX to PDF. Their server-side Office
-rendering engine is optional at startup and is not yet guaranteed in production; requests return a
-safe availability error when it is missing.
-
-MVP2 also adds browser and API OCR workflows. The server starts without an OCR engine, and an OCR
-request returns a safe availability error when that optional runtime is missing.
+The production Docker image includes LibreOffice for DOCX, PPTX, and XLSX conversion and Tesseract
+with English OCR data. The server can still start without either engine in local, non-container
+environments; requests return safe availability errors and `/api/v1/capabilities` reports the
+current server state. See [`docs/mvp3-production-runtime.md`](docs/mvp3-production-runtime.md).
 
 ## Feedback
 
