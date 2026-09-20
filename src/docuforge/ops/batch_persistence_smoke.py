@@ -1,0 +1,104 @@
+"""Verify durable batch sessions survive service recreation."""
+
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+from pathlib import Path
+from time import monotonic, sleep
+from zipfile import ZipFile
+
+from PIL import Image
+
+from docuforge.api.batches import BatchExecutionPhase, BatchExecutionService
+from docuforge.batch import BatchImageConvertRequest, BatchImageInput
+from docuforge.converters.office import LibreOfficeEngine
+
+
+class BatchPersistenceSmokeError(RuntimeError):
+    """Safe operational persistence-smoke failure."""
+
+
+def run_batch_persistence_smoke() -> tuple[str, ...]:
+    """Create, restart, and re-read one synthetic durable image batch."""
+    configured_root = os.getenv("DOCUFORGE_BATCH_STORAGE_DIRECTORY")
+    parent = Path(configured_root) if configured_root else None
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="docuforge-persistence-smoke-", dir=parent
+        ) as directory:
+            storage = Path(directory)
+            first = BatchExecutionService(
+                office_engine_factory=LibreOfficeEngine,
+                max_workers=1,
+                storage_directory=storage,
+            )
+            workspace = first.create_workspace()
+            item_directory = workspace.inputs_directory / "item-0001"
+            item_directory.mkdir()
+            source = item_directory / "smoke.png"
+            Image.new("RGB", (8, 8), "blue").save(source)
+            request = BatchImageConvertRequest(
+                (BatchImageInput(source, descriptor="smoke.png"),),
+                workspace.output_directory,
+                "jpg",
+                workspace.batch_id,
+            )
+            first.create_session(request, workspace)
+            _wait_ready(first, str(request.batch_id))
+            _verify_archive(first.download_path(str(request.batch_id)))
+            first.shutdown()
+
+            second = BatchExecutionService(
+                office_engine_factory=LibreOfficeEngine,
+                max_workers=1,
+                storage_directory=storage,
+            )
+            restored = second.get(str(request.batch_id))
+            if restored.phase is not BatchExecutionPhase.READY:
+                raise BatchPersistenceSmokeError("restored batch was not ready")
+            _verify_archive(second.download_path(str(request.batch_id)))
+            second.shutdown()
+    except BatchPersistenceSmokeError:
+        raise
+    except (OSError, RuntimeError, ValueError) as error:
+        raise BatchPersistenceSmokeError("batch-session-restart check failed") from error
+    return ("batch-session-restart",)
+
+
+def _wait_ready(service: BatchExecutionService, batch_id: str) -> None:
+    deadline = monotonic() + 15
+    while monotonic() < deadline:
+        snapshot = service.get(batch_id)
+        if snapshot.phase is BatchExecutionPhase.READY:
+            return
+        if snapshot.phase is BatchExecutionPhase.ERROR:
+            raise BatchPersistenceSmokeError("batch execution failed")
+        sleep(0.02)
+    raise BatchPersistenceSmokeError("batch execution did not finish")
+
+
+def _verify_archive(path: Path) -> None:
+    try:
+        with ZipFile(path) as archive:
+            if archive.namelist() != ["0001-smoke.jpg"] or archive.testzip() is not None:
+                raise BatchPersistenceSmokeError("batch archive was invalid")
+    except OSError as error:
+        raise BatchPersistenceSmokeError("batch archive was unavailable") from error
+
+
+def main() -> int:
+    try:
+        checks = run_batch_persistence_smoke()
+    except BatchPersistenceSmokeError:
+        print("FAIL durable batch persistence check failed", file=sys.stderr)
+        return 1
+    for check in checks:
+        print(f"PASS {check}")
+    print(f"Durable batch persistence smoke passed: {len(checks)} check")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

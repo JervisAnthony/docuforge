@@ -29,6 +29,23 @@ dedicated non-root user. These system packages make the image larger than a Pyth
 The **Production runtime image** CI job builds the real image and verifies actual Office and OCR
 execution. Local or non-Docker runs still require the binaries to be installed separately.
 
+## Durable batch storage
+
+The production image sets:
+
+```text
+DOCUFORGE_BATCH_STORAGE_DIRECTORY=/var/lib/docuforge
+```
+
+This enables SQLite session metadata and deterministic per-BatchId workspaces. The non-root API
+user owns the directory. Process restarts restore terminal status, downloads, selective recovery,
+and packaging-only recovery while the same filesystem remains available.
+
+The container filesystem alone does not survive every container replacement or redeployment.
+Mount a persistent volume at `/var/lib/docuforge` when deployment-level batch durability is
+required. This remains single-process orchestration; do not run multiple API processes against the
+same executor state.
+
 For preview deployments, add the exact preview origin to
 `DOCUFORGE_CORS_ALLOWED_ORIGINS` as a comma-separated value. Do not use a wildcard origin for
 the public deployment.
@@ -73,7 +90,8 @@ After both deployments are available:
 7. Confirm responses include `X-Request-ID` and the defensive response headers.
 8. Confirm an unknown web origin is not granted CORS access.
 
-The deployment remains stateless: uploaded files are processed in request-scoped temporary
-workspaces and are not intentionally persisted by the application.
+Single-file uploads use request-scoped temporary workspaces. Batch uploads use isolated session
+workspaces and may remain on disk until terminal TTL expiry or internal expiry cleanup. They are
+not permanent records.
 Office and OCR processing remains inside the Railway API container and does not use an external
 conversion or OCR service.

@@ -1,6 +1,7 @@
 """FastAPI batch creation, polling, control, and download coverage."""
 
 from io import BytesIO
+from pathlib import Path
 from threading import Event
 from time import monotonic, sleep
 from unittest.mock import patch
@@ -11,6 +12,8 @@ from fastapi.testclient import TestClient
 
 import docuforge.api.batches as batches_module
 from docuforge.api import create_app
+from docuforge.api.batch_persistence import BatchPersistenceError
+from docuforge.api.config import ApiSettings
 from tests.api.image_test_support import make_image
 from tests.batch.test_document import RecordingEngine
 
@@ -208,3 +211,111 @@ def test_packaging_status_does_not_offer_or_accept_cancellation() -> None:
         assert rejected.json()["code"] == "batch_not_cancellable"
         release.set()
         assert wait_for_terminal(client, location)["phase"] == "ready"
+
+
+def test_durable_batch_status_location_and_download_survive_app_recreation(
+    tmp_path: Path,
+) -> None:
+    settings = ApiSettings(batch_storage_directory=tmp_path / "durable")
+    with TestClient(create_app(settings)) as first:
+        response = first.post(
+            "/api/v1/batches/images/convert",
+            files=[*image_files("one.png"), ("format", (None, "jpeg"))],
+        )
+        assert response.status_code == 202
+        location = response.headers["location"]
+        batch_id = response.json()["id"]
+        assert location == f"/api/v1/batches/{batch_id}"
+        assert wait_for_terminal(first, location)["phase"] == "ready"
+
+    with TestClient(create_app(settings)) as second:
+        restored = second.get(location)
+        assert restored.status_code == 200
+        assert restored.json()["id"] == batch_id
+        assert restored.json()["phase"] == "ready"
+        assert all("path" not in item for item in restored.json()["items"])
+        download = second.get(f"{location}/download")
+        assert download.status_code == 200
+        with ZipFile(BytesIO(download.content)) as archive:
+            assert archive.namelist() == ["0001-one.jpg"]
+
+
+def test_durable_custom_prefix_and_persistence_failure_are_safe(tmp_path: Path) -> None:
+    settings = ApiSettings(
+        api_prefix="/custom",
+        batch_storage_directory=tmp_path / "durable",
+    )
+    app = create_app(settings)
+    repository = app.state.batch_service._repository
+    assert repository is not None
+    with (
+        patch.object(
+            repository,
+            "add",
+            side_effect=BatchPersistenceError("private SQLite path and SQL"),
+        ),
+        TestClient(app) as client,
+    ):
+        response = client.post(
+            "/custom/batches/images/convert",
+            files=[*image_files("one.png"), ("format", (None, "jpeg"))],
+        )
+    assert response.status_code == 503
+    assert response.json() == {
+        "code": "batch_persistence_failed",
+        "message": "The batch session could not be persisted.",
+    }
+    assert "SQLite" not in response.text
+
+
+def test_failed_durable_recover_preserves_terminal_state_and_zip(tmp_path: Path) -> None:
+    settings = ApiSettings(batch_storage_directory=tmp_path / "durable")
+    app = create_app(settings)
+    repository = app.state.batch_service._repository
+    assert repository is not None
+    real_runner = batches_module.batch_convert_images
+    missing_path: list[Path] = []
+
+    def first_item_missing(request: object, *args: object, **kwargs: object) -> object:
+        if not missing_path:
+            path = request.items[0].input_path  # type: ignore[attr-defined]
+            missing_path.append(path)
+            path.write_bytes(b"corrupt image")
+        return real_runner(request, *args, **kwargs)  # type: ignore[arg-type]
+
+    with (
+        patch.object(batches_module, "batch_convert_images", side_effect=first_item_missing),
+        TestClient(app) as client,
+    ):
+        accepted = client.post(
+            "/api/v1/batches/images/convert",
+            files=[*image_files("one.png", "two.png"), ("format", (None, "jpeg"))],
+        )
+        location = accepted.headers["location"]
+        before = wait_for_terminal(client, location)
+        assert before["attempt"] == 1
+        assert before["phase"] == "ready"
+        assert before["can_recover"] is True
+        assert before["can_download"] is True
+        zip_before = client.get(f"{location}/download").content
+        archive_path = app.state.batch_service.download_path(before["id"])
+
+        with patch.object(
+            repository,
+            "save",
+            side_effect=BatchPersistenceError("private SQLite diagnostic"),
+        ):
+            failed = client.post(f"{location}/recover")
+        assert failed.status_code == 503
+        assert failed.json()["code"] == "batch_persistence_failed"
+        assert "private SQLite diagnostic" not in failed.text
+        assert client.get(location).json() == before
+        assert archive_path.is_file()
+        assert client.get(f"{location}/download").content == zip_before
+
+        missing_path[0].write_bytes(make_image())
+        retried = client.post(f"{location}/recover")
+        assert retried.status_code == 202
+        assert retried.json()["attempt"] == 2
+        final = wait_for_terminal(client, location)
+        assert final["status"] == "completed"

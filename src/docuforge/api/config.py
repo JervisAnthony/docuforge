@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from docuforge.version import package_version
 
@@ -24,6 +25,18 @@ def _environment_origins(name: str) -> tuple[str, ...]:
     return tuple(origin.strip().rstrip("/") for origin in raw_value.split(",") if origin.strip())
 
 
+def _environment_path(name: str) -> Path | None:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return None
+    if not raw_value.strip() or "\x00" in raw_value:
+        raise ValueError(f"{name} must be a valid non-blank path")
+    try:
+        return Path(raw_value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be a valid non-blank path") from error
+
+
 @dataclass(frozen=True, slots=True)
 class ApiSettings:
     """Immutable settings used to build one API application instance."""
@@ -42,6 +55,7 @@ class ApiSettings:
     max_pdf_render_pixels_per_page: int = 40_000_000
     batch_max_workers: int = 2
     batch_terminal_ttl_seconds: int = 3600
+    batch_storage_directory: Path | None = None
 
     @classmethod
     def from_environment(cls) -> "ApiSettings":
@@ -50,6 +64,9 @@ class ApiSettings:
             environment=os.getenv("DOCUFORGE_ENVIRONMENT", "local").strip() or "local",
             docs_enabled=_environment_bool("DOCUFORGE_DOCS_ENABLED", default=True),
             cors_allowed_origins=_environment_origins("DOCUFORGE_CORS_ALLOWED_ORIGINS"),
+            batch_storage_directory=_environment_path(
+                "DOCUFORGE_BATCH_STORAGE_DIRECTORY"
+            ),
         )
 
     def __post_init__(self) -> None:
@@ -90,3 +107,7 @@ class ApiSettings:
 
         if self.max_upload_file_bytes > self.max_upload_request_bytes:
             raise ValueError("max_upload_file_bytes must not exceed max_upload_request_bytes")
+        if self.batch_storage_directory is not None and not isinstance(
+            self.batch_storage_directory, Path
+        ):
+            raise ValueError("batch_storage_directory must be a Path or None")

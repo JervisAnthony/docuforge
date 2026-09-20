@@ -41,3 +41,6 @@ separate framework-independent [batch item model](mvp2-batch.md) for ordered mul
 `BatchRequest` reuses `OperationKey`, but it does not yet integrate automatically with `JobManager`
 or `JobRepository`, execute batch files, or add workers, queues, or persistence. Durable repositories
 and worker integrations can implement the same job contracts when those capabilities are required.
+
+Commit 56 adds durable storage specifically for batch execution sessions. The generic
+`JobRepository` and its process-local lifecycle remain unchanged.

@@ -9,6 +9,7 @@ import pytest
 
 import docuforge.api.batches as batches_module
 import docuforge.batch.image as image_module
+from docuforge.api.batch_persistence import BatchPersistenceError
 from docuforge.api.batches import BatchExecutionPhase, BatchExecutionService
 from docuforge.api.errors import ApiError
 from docuforge.batch import (
@@ -41,7 +42,7 @@ def create_request(
         write_image(path)
         items.append(BatchImageInput(path, descriptor=name))
     return workspace, BatchImageConvertRequest(
-        tuple(items), workspace.output_directory, "jpg"
+        tuple(items), workspace.output_directory, "jpg", workspace.batch_id
     )
 
 
@@ -99,6 +100,49 @@ def test_cancellation_is_connected_and_repeated_request_is_safe() -> None:
         ready = wait_for(runner, str(request.batch_id), BatchExecutionPhase.READY)
     assert ready.batch.status is BatchStatus.PARTIAL  # type: ignore[attr-defined]
     assert ready.batch.cancelled_count == 2  # type: ignore[attr-defined]
+    runner.shutdown()
+
+
+def test_durable_cancel_save_failure_does_not_trigger_live_token(tmp_path: Path) -> None:
+    runner = service(storage_directory=tmp_path)
+    workspace, request = create_request(runner, ("one.png", "two.png"))
+    entered = Event()
+    release = Event()
+    real_runner = batches_module.batch_convert_images
+
+    def blocking_runner(*args: object, **kwargs: object) -> object:
+        entered.set()
+        assert release.wait(5)
+        return real_runner(*args, **kwargs)  # type: ignore[arg-type]
+
+    with patch.object(batches_module, "batch_convert_images", side_effect=blocking_runner):
+        runner.create_session(request, workspace)  # type: ignore[arg-type]
+        assert entered.wait(5)
+        before = runner.get(str(request.batch_id))
+        repository = runner._repository
+        assert repository is not None
+        with (
+            patch.object(
+                repository,
+                "save",
+                side_effect=BatchPersistenceError("private SQLite diagnostic"),
+            ),
+            pytest.raises(ApiError) as error,
+        ):
+            runner.cancel(str(request.batch_id))
+        assert error.value.status_code == 503
+        assert error.value.code == "batch_persistence_failed"
+        unchanged = runner.get(str(request.batch_id))
+        assert unchanged.phase is before.phase
+        assert unchanged.cancellation_requested is False
+        assert unchanged.can_cancel is True
+        assert runner._sessions[str(request.batch_id)].cancellation.cancellation_requested is False
+
+        cancelled = runner.cancel(str(request.batch_id))
+        assert cancelled.phase is BatchExecutionPhase.CANCELLING
+        assert cancelled.cancellation_requested is True
+        release.set()
+        wait_for(runner, str(request.batch_id), BatchExecutionPhase.READY)
     runner.shutdown()
 
 

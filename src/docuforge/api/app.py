@@ -31,6 +31,7 @@ def create_app(
         office_engine_factory=office_engine_factory,
         max_workers=resolved_settings.batch_max_workers,
         terminal_ttl_seconds=resolved_settings.batch_terminal_ttl_seconds,
+        storage_directory=resolved_settings.batch_storage_directory,
     )
 
     @asynccontextmanager

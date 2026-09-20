@@ -1,4 +1,4 @@
-"""Process-local batch creation, polling, cancellation, recovery, and download routes."""
+"""Batch creation, polling, cancellation, recovery, and download routes."""
 
 from typing import Annotated
 
@@ -66,8 +66,8 @@ def create_batch_router(
             policy=image_policy,
             service=service,
             settings=settings,
-            request_factory=lambda items, output: BatchImageConvertRequest(
-                items, output, target
+            request_factory=lambda items, output, batch_id: BatchImageConvertRequest(
+                items, output, target, batch_id
             ),
         )
 
@@ -103,13 +103,14 @@ def create_batch_router(
             policy=image_policy,
             service=service,
             settings=settings,
-            request_factory=lambda items, output: BatchImageResizeRequest(
+            request_factory=lambda items, output, batch_id: BatchImageResizeRequest(
                 items,
                 output,
                 target,
                 max_width=width,
                 max_height=height,
                 allow_upscale=upscale,
+                batch_id=batch_id,
             ),
         )
 
@@ -143,12 +144,13 @@ def create_batch_router(
             policy=image_policy,
             service=service,
             settings=settings,
-            request_factory=lambda items, output: BatchImageCompressRequest(
+            request_factory=lambda items, output, batch_id: BatchImageCompressRequest(
                 items,
                 output,
                 target,
                 quality=parsed_quality,
                 max_bytes=parsed_max_bytes,
+                batch_id=batch_id,
             ),
         )
 
@@ -173,6 +175,7 @@ def create_batch_router(
                     for upload in uploads
                 ),
                 workspace.output_directory,
+                workspace.batch_id,
             )
             snapshot = service.create_session(request, workspace)
         except InvalidBatchDefinitionError:
@@ -241,7 +244,9 @@ async def _create_image_session(
             BatchImageInput(upload.stored_path, descriptor=upload.original_name)
             for upload in stored
         )
-        request = request_factory(items, workspace.output_directory)  # type: ignore[operator]
+        request = request_factory(  # type: ignore[operator]
+            items, workspace.output_directory, workspace.batch_id
+        )
         snapshot = service.create_session(request, workspace)
     except InvalidBatchDefinitionError:
         workspace.cleanup()

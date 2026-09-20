@@ -137,6 +137,10 @@ These sessions and recovery records are intentionally process-local. They do not
 or deployment restart, routing to another process, or session TTL expiry. This is not durable or
 distributed workflow orchestration.
 
+Post-MVP2 note: Commit 56 adds optional single-process restart durability outside this completed
+roadmap. See [Durable batch sessions](mvp3-durable-batch-sessions.md). It does not add distributed
+execution or cross-process coordination.
+
 ## Deliberate exclusions and roadmap
 
 The implementation adds no Redis, database persistence, distributed queue or workers, WebSockets,

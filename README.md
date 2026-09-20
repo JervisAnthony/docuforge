@@ -160,9 +160,10 @@ production Docker image includes Tesseract with English OCR data; local, non-con
 must provide their own Tesseract runtime.
 
 The [batch workflows](docs/mvp2-batch.md) process ordered image or mixed Office uploads with
-item-level progress, cooperative cancellation, selective retry, and ZIP download. Batch sessions
-and recovery are process-local and expire; they do not survive a server restart or cross-worker
-routing.
+item-level progress, cooperative cancellation, selective retry, and ZIP download. Local ephemeral
+configuration remains process-local. The production container uses a durable storage directory so
+terminal status, downloads, and recovery survive process restart while its filesystem remains; a
+persistent volume is required to survive container replacement. Execution remains single-process.
 
 ## Web API
 
@@ -182,7 +183,9 @@ System endpoints:
 
 Interactive documentation is available at `/docs` and `/redoc` in environments where API docs are enabled.
 
-Multipart uploads are bounded by API transport limits and processed in request-scoped workspaces. Split and PDF-to-images return ZIP archives; the remaining workflows return the converted PDF or image directly.
+Multipart uploads are bounded by API transport limits. Single-file uploads use request-scoped
+workspaces; batch uploads use isolated session workspaces retained through their terminal TTL.
+Split and PDF-to-images return ZIP archives; the remaining workflows return their converted output.
 
 ## Deployment
 
