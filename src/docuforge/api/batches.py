@@ -1,17 +1,25 @@
-"""Process-local execution sessions for browser-visible batch workflows."""
+"""Single-process execution with optional durable batch-session storage."""
 
 from __future__ import annotations
 
-import shutil
-import tempfile
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from threading import RLock
-from time import monotonic
+from time import time
 
+from docuforge.api.batch_persistence import (
+    BatchPersistenceError,
+    BatchSessionRepository,
+    BatchSessionWorkspace,
+    archive_is_valid,
+    decode_record,
+    encode_record,
+    prepare_durable_storage,
+    reconcile_orphan_workspaces,
+)
 from docuforge.api.errors import ApiError
 from docuforge.api.office import OfficeEngineFactory
 from docuforge.batch import (
@@ -19,6 +27,7 @@ from docuforge.batch import (
     BatchCancellationToken,
     BatchDocumentConvertRequest,
     BatchDocumentResult,
+    BatchId,
     BatchImageCompressRequest,
     BatchImageConvertRequest,
     BatchImageResizeRequest,
@@ -49,7 +58,7 @@ _EXECUTION_FAILURE = BatchItemFailure(
 
 
 class BatchExecutionPhase(str, Enum):
-    """Process-local orchestration phase separate from item outcome status."""
+    """Orchestration phase separate from item outcome status."""
 
     QUEUED = "queued"
     PROCESSING = "processing"
@@ -65,39 +74,6 @@ class BatchSessionError:
 
     code: str
     message: str
-
-
-class BatchSessionWorkspace:
-    """Retained workspace owned by exactly one process-local session."""
-
-    __slots__ = ("_cleaned", "path")
-
-    def __init__(self) -> None:
-        self.path = Path(tempfile.mkdtemp(prefix="docuforge-batch-session-"))
-        self._cleaned = False
-        self.inputs_directory.mkdir()
-        self.output_directory.mkdir()
-
-    @property
-    def inputs_directory(self) -> Path:
-        return self.path / "inputs"
-
-    @property
-    def output_directory(self) -> Path:
-        return self.path / "outputs"
-
-    @property
-    def archive_path(self) -> Path:
-        return self.path / "result.zip"
-
-    def cleanup(self) -> None:
-        if self._cleaned:
-            return
-        try:
-            shutil.rmtree(self.path)
-        except FileNotFoundError:
-            pass
-        self._cleaned = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,7 +105,7 @@ class _Session:
 
 
 class BatchExecutionService:
-    """Own bounded workers and isolated process-local batch sessions."""
+    """Own bounded workers and isolated ephemeral or durable batch sessions."""
 
     def __init__(
         self,
@@ -137,7 +113,8 @@ class BatchExecutionService:
         office_engine_factory: OfficeEngineFactory,
         max_workers: int = 2,
         terminal_ttl_seconds: int = 3600,
-        clock: Callable[[], float] = monotonic,
+        clock: Callable[[], float] = time,
+        storage_directory: Path | None = None,
     ) -> None:
         if type(max_workers) is not int or max_workers <= 0:
             raise ValueError("max_workers must be a positive integer")
@@ -146,16 +123,27 @@ class BatchExecutionService:
         self._office_engine_factory = office_engine_factory
         self._terminal_ttl_seconds = terminal_ttl_seconds
         self._clock = clock
+        self._durable = storage_directory is not None
+        self._sessions_root: Path | None = None
+        self._repository: BatchSessionRepository | None = None
+        if storage_directory is not None:
+            self._sessions_root, self._repository = prepare_durable_storage(
+                Path(storage_directory)
+            )
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="docuforge-batch"
         )
         self._sessions: dict[str, _Session] = {}
         self._lock = RLock()
         self._shutdown = False
+        if self._durable:
+            self._restore_sessions()
 
     def create_workspace(self) -> BatchSessionWorkspace:
         """Create an unregistered workspace for validated upload storage."""
-        return BatchSessionWorkspace()
+        if self._sessions_root is None:
+            return BatchSessionWorkspace.ephemeral()
+        return BatchSessionWorkspace.durable_new(self._sessions_root)
 
     def create_session(
         self, request: BatchExecutionRequest, workspace: BatchSessionWorkspace
@@ -164,6 +152,8 @@ class BatchExecutionService:
         if not isinstance(workspace, BatchSessionWorkspace):
             raise TypeError("workspace must be a BatchSessionWorkspace")
         batch = _initial_batch(request)
+        if batch.id != workspace.batch_id:
+            raise ValueError("batch request identity must match its workspace")
         session = _Session(
             request=request,
             workspace=workspace,
@@ -181,6 +171,16 @@ class BatchExecutionService:
             if self._shutdown:
                 raise RuntimeError("batch execution service is shut down")
             self._sessions[str(batch.id)] = session
+            try:
+                self._persist_locked(session, add=True)
+            except BatchPersistenceError:
+                self._sessions.pop(str(batch.id), None)
+                workspace.cleanup()
+                raise ApiError(
+                    status_code=503,
+                    code="batch_persistence_failed",
+                    message="The batch session could not be persisted.",
+                ) from None
             self._executor.submit(self._execute, str(batch.id), False, False)
             return self._snapshot_locked(session)
 
@@ -203,9 +203,26 @@ class BatchExecutionService:
                     code="batch_not_cancellable",
                     message="The batch can no longer be cancelled.",
                 )
+            updated_at = self._clock()
+            if self._repository is not None:
+                candidate_cancellation = BatchCancellationToken()
+                candidate_cancellation.request_cancellation()
+                candidate = _Session(
+                    request=session.request,
+                    workspace=session.workspace,
+                    batch=session.batch,
+                    cancellation=candidate_cancellation,
+                    attempt=session.attempt,
+                    phase=BatchExecutionPhase.CANCELLING,
+                    result=session.result,
+                    archive_path=session.archive_path,
+                    session_error=session.session_error,
+                    updated_at=updated_at,
+                )
+                self._persist_or_api_error(candidate)
             session.cancellation.request_cancellation()
             session.phase = BatchExecutionPhase.CANCELLING
-            session.updated_at = self._clock()
+            session.updated_at = updated_at
             return self._snapshot_locked(session)
 
     def recover(self, batch_id: str) -> BatchExecutionSnapshot:
@@ -221,7 +238,8 @@ class BatchExecutionService:
                 session.phase is BatchExecutionPhase.ERROR
                 and session.result is not None
                 and session.session_error is not None
-                and session.session_error.code == "batch_packaging_failed"
+                and session.session_error.code
+                in {"batch_packaging_failed", "batch_packaging_interrupted"}
             )
             selective = session.result is not None and any(
                 item.status in {BatchItemStatus.FAILED, BatchItemStatus.CANCELLED}
@@ -233,21 +251,41 @@ class BatchExecutionService:
                     code="batch_not_recoverable",
                     message="The batch has no recoverable items.",
                 )
-            session.attempt += 1
-            session.cancellation = BatchCancellationToken()
+            if packaging_only:
+                next_batch = session.batch
+                next_result = session.result
+            elif selective and session.result is not None:
+                next_batch = session.result.batch.recover_items()
+                next_result = session.result
+            else:
+                next_batch = _initial_batch(session.request)
+                next_result = None
+            next_cancellation = BatchCancellationToken()
+            updated_at = self._clock()
+            candidate = _Session(
+                request=session.request,
+                workspace=session.workspace,
+                # A selective retry's preserved result belongs to the previous terminal
+                # snapshot. Persist that self-consistent pair until the worker records
+                # the new processing snapshot without the preserved result.
+                batch=session.batch if selective else next_batch,
+                cancellation=next_cancellation,
+                attempt=session.attempt + 1,
+                phase=BatchExecutionPhase.QUEUED,
+                result=next_result,
+                archive_path=None,
+                session_error=None,
+                updated_at=updated_at,
+            )
+            self._persist_or_api_error(candidate)
+            session.attempt = candidate.attempt
+            session.cancellation = next_cancellation
             session.session_error = None
             session.archive_path = None
-            session.workspace.archive_path.unlink(missing_ok=True)
-            if packaging_only:
-                session.phase = BatchExecutionPhase.QUEUED
-            elif selective and session.result is not None:
-                session.batch = session.result.batch.recover_items()
-                session.phase = BatchExecutionPhase.QUEUED
-            else:
-                session.result = None
-                session.batch = _initial_batch(session.request)
-                session.phase = BatchExecutionPhase.QUEUED
-            session.updated_at = self._clock()
+            session.result = next_result
+            session.batch = next_batch
+            session.phase = BatchExecutionPhase.QUEUED
+            session.updated_at = updated_at
             self._executor.submit(self._execute, batch_id, selective, packaging_only)
             return self._snapshot_locked(session)
 
@@ -280,7 +318,7 @@ class BatchExecutionService:
             return session.archive_path
 
     def shutdown(self) -> None:
-        """Cooperatively stop work, join workers, and remove every workspace."""
+        """Cooperatively stop work while retaining durable sessions."""
         with self._lock:
             if self._shutdown:
                 return
@@ -296,8 +334,9 @@ class BatchExecutionService:
                     session.cancellation.request_cancellation()
         self._executor.shutdown(wait=True, cancel_futures=False)
         with self._lock:
-            for session in self._sessions.values():
-                session.workspace.cleanup()
+            if not self._durable:
+                for session in self._sessions.values():
+                    session.workspace.cleanup()
             self._sessions.clear()
 
     def _execute(self, batch_id: str, selective: bool, packaging_only: bool) -> None:
@@ -315,8 +354,11 @@ class BatchExecutionService:
                     if session.cancellation.cancellation_requested
                     else BatchExecutionPhase.PROCESSING
                 )
+                if selective:
+                    session.result = None
                 session.updated_at = self._clock()
                 result = None
+                self._persist_locked(session)
         try:
             if not packaging_only:
                 result = self._run_request(session, previous, attempt)
@@ -325,12 +367,12 @@ class BatchExecutionService:
                         return
                     session.result = result
                     session.batch = result.batch
+                    session.phase = BatchExecutionPhase.PACKAGING
+                    session.updated_at = self._clock()
+                    self._persist_locked(session)
             if result is None:
                 raise RuntimeError("batch result missing")
             if result.outputs:
-                with self._lock:
-                    session.phase = BatchExecutionPhase.PACKAGING
-                    session.updated_at = self._clock()
                 package_batch_outputs(result, session.workspace.archive_path)
                 archive_path: Path | None = session.workspace.archive_path
             else:
@@ -340,6 +382,7 @@ class BatchExecutionService:
                 session.phase = BatchExecutionPhase.READY
                 session.session_error = None
                 session.updated_at = self._clock()
+                self._persist_locked(session)
         except Exception:  # noqa: BLE001 - process boundary must expose only safe state
             with self._lock:
                 if result is not None:
@@ -357,6 +400,13 @@ class BatchExecutionService:
                 session.archive_path = None
                 session.phase = BatchExecutionPhase.ERROR
                 session.updated_at = self._clock()
+                try:
+                    self._persist_locked(session)
+                except BatchPersistenceError:
+                    session.session_error = BatchSessionError(
+                        "batch_persistence_failed",
+                        "The batch session could not be persisted.",
+                    )
 
     def _run_request(
         self,
@@ -372,6 +422,7 @@ class BatchExecutionService:
                 if session.phase is not BatchExecutionPhase.CANCELLING:
                     session.phase = BatchExecutionPhase.PROCESSING
                 session.updated_at = self._clock()
+                self._persist_locked(session)
 
         request = session.request
         controls = {
@@ -411,7 +462,122 @@ class BatchExecutionService:
             and now - session.updated_at >= self._terminal_ttl_seconds
         ]
         for batch_id in expired:
-            self._sessions.pop(batch_id).workspace.cleanup()
+            session = self._sessions.pop(batch_id)
+            if self._repository is not None:
+                self._repository.delete(batch_id)
+            session.workspace.cleanup()
+
+    def _persist_or_api_error(self, session: _Session) -> None:
+        try:
+            self._persist_locked(session)
+        except BatchPersistenceError:
+            raise ApiError(
+                status_code=503,
+                code="batch_persistence_failed",
+                message="The batch session could not be persisted.",
+            ) from None
+
+    def _persist_locked(self, session: _Session, *, add: bool = False) -> None:
+        if self._repository is None:
+            return
+        record = encode_record(
+            request=session.request,
+            batch=session.batch,
+            result=session.result,
+            attempt=session.attempt,
+            phase=session.phase.value,
+            cancellation_requested=session.cancellation.cancellation_requested,
+            session_error=(
+                None
+                if session.session_error is None
+                else (session.session_error.code, session.session_error.message)
+            ),
+            archive_available=session.archive_path is not None,
+            updated_at=session.updated_at,
+            workspace=session.workspace,
+        )
+        if add:
+            self._repository.add(record)
+        else:
+            self._repository.save(record)
+
+    def _restore_sessions(self) -> None:
+        if self._repository is None or self._sessions_root is None:
+            return
+        now = self._clock()
+        records = self._repository.list_all()
+        reconcile_orphan_workspaces(
+            self._sessions_root, {record.batch_id for record in records}
+        )
+        for record in records:
+            try:
+                phase = BatchExecutionPhase(record.phase)
+                workspace = BatchSessionWorkspace.durable_existing(
+                    self._sessions_root, BatchId(record.batch_id)
+                )
+                if (
+                    phase in {BatchExecutionPhase.READY, BatchExecutionPhase.ERROR}
+                    and now - record.updated_at >= self._terminal_ttl_seconds
+                ):
+                    self._repository.delete(record.batch_id)
+                    workspace.cleanup()
+                    continue
+                request, batch, result, error = decode_record(record, workspace)
+            except (TypeError, ValueError) as decode_error:
+                raise BatchPersistenceError(
+                    "Stored batch session could not be restored."
+                ) from decode_error
+            session = _Session(
+                request=request,  # type: ignore[arg-type]
+                workspace=workspace,
+                batch=batch,
+                cancellation=BatchCancellationToken(),
+                attempt=record.attempt,
+                phase=phase,
+                result=result,
+                archive_path=None,
+                session_error=None if error is None else BatchSessionError(*error),
+                updated_at=record.updated_at,
+            )
+            if phase in {
+                BatchExecutionPhase.QUEUED,
+                BatchExecutionPhase.PROCESSING,
+                BatchExecutionPhase.CANCELLING,
+            }:
+                session.batch = batch.fail_nonterminal_items(_EXECUTION_FAILURE)
+                session.result = None
+                session.phase = BatchExecutionPhase.ERROR
+                session.session_error = BatchSessionError(
+                    "batch_execution_interrupted",
+                    "The batch was interrupted by a server restart. Retry the batch.",
+                )
+                session.updated_at = now
+            elif phase is BatchExecutionPhase.PACKAGING:
+                if result is None:
+                    raise BatchPersistenceError(
+                        "Stored packaging session has no trustworthy result."
+                    )
+                session.phase = BatchExecutionPhase.ERROR
+                session.session_error = BatchSessionError(
+                    "batch_packaging_interrupted",
+                    "The batch archive was interrupted by a server restart. Retry packaging.",
+                )
+                session.updated_at = now
+            elif phase is BatchExecutionPhase.READY and result is not None and result.outputs:
+                if record.archive_available and archive_is_valid(
+                    workspace.archive_path, result, workspace
+                ):
+                    session.archive_path = workspace.archive_path
+                else:
+                    session.phase = BatchExecutionPhase.ERROR
+                    session.session_error = BatchSessionError(
+                        "batch_packaging_failed",
+                        "The batch outputs could not be packaged.",
+                    )
+                    session.updated_at = now
+            self._sessions[record.batch_id] = session
+            if session.phase is not phase or session.updated_at != record.updated_at:
+                self._persist_locked(session)
 
     def _snapshot_locked(self, session: _Session) -> BatchExecutionSnapshot:
         recoverable_items = any(

@@ -153,5 +153,7 @@ jobs:
         run: docker build -t docuforge-runtime-ci .
       - name: Verify production engines
         run: docker run --rm docuforge-runtime-ci python -m docuforge.ops.runtime_smoke
+      - name: Verify durable batch restart
+        run: docker run --rm docuforge-runtime-ci python -m docuforge.ops.batch_persistence_smoke
       - name: Verify non-root execution
         run: test "$(docker run --rm docuforge-runtime-ci id -u)" != "0"

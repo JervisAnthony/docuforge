@@ -49,6 +49,7 @@ coverage.xml
 *.py.cover
 .hypothesis/
 .pytest_cache/
+.pytest-tmp-*/
 cover/
 
 # Translations
@@ -214,6 +215,9 @@ frontend/.vite/
 frontend/playwright-report/
 frontend/test-results/
 frontend/.e2e-fixtures/
+
+# Optional local DocuForge durable runtime data
+.docuforge-data/
 
 # PyPI configuration file
 .pypirc

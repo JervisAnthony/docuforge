@@ -270,8 +270,8 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 function recoveryLabel(snapshot: BatchSnapshot): string {
-  if (snapshot.session_error?.code === 'batch_packaging_failed') return 'Retry packaging'
-  if (snapshot.session_error?.code === 'batch_execution_failed') return 'Retry batch'
+  if (['batch_packaging_failed', 'batch_packaging_interrupted'].includes(snapshot.session_error?.code ?? '')) return 'Retry packaging'
+  if (['batch_execution_failed', 'batch_execution_interrupted'].includes(snapshot.session_error?.code ?? '')) return 'Retry batch'
   return 'Retry failed/cancelled items'
 }
 

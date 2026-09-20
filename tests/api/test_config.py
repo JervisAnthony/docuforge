@@ -1,4 +1,6 @@
 from dataclasses import FrozenInstanceError
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -20,6 +22,7 @@ def test_settings_defaults() -> None:
     assert settings.upload_chunk_bytes == 1024 * 1024
     assert settings.max_pdf_render_pages == 100
     assert settings.max_pdf_render_pixels_per_page == 40_000_000
+    assert settings.batch_storage_directory is None
 
 
 def test_settings_accept_custom_values() -> None:
@@ -104,3 +107,32 @@ def test_settings_reject_invalid_upload_limits(field_name: str, value: object) -
 def test_settings_reject_file_limit_above_request_limit() -> None:
     with pytest.raises(ValueError, match="must not exceed"):
         ApiSettings(max_upload_file_bytes=11, max_upload_request_bytes=10)
+
+
+def test_settings_reads_optional_batch_storage_directory(monkeypatch) -> None:
+    monkeypatch.setenv("DOCUFORGE_BATCH_STORAGE_DIRECTORY", ".docuforge-data")
+    assert ApiSettings.from_environment().batch_storage_directory == Path(
+        ".docuforge-data"
+    )
+
+
+def test_settings_rejects_blank_batch_storage_environment(monkeypatch) -> None:
+    monkeypatch.setenv("DOCUFORGE_BATCH_STORAGE_DIRECTORY", "   ")
+    with pytest.raises(ValueError, match="valid non-blank path"):
+        ApiSettings.from_environment()
+
+
+def test_settings_rejects_nul_batch_storage_environment() -> None:
+    def environment(name: str, default=None):
+        return "bad\x00path" if name == "DOCUFORGE_BATCH_STORAGE_DIRECTORY" else default
+
+    with (
+        patch("docuforge.api.config.os.getenv", side_effect=environment),
+        pytest.raises(ValueError, match="valid non-blank path"),
+    ):
+        ApiSettings.from_environment()
+
+
+def test_settings_rejects_non_path_batch_storage_value() -> None:
+    with pytest.raises(ValueError, match="Path or None"):
+        ApiSettings(batch_storage_directory="runtime")  # type: ignore[arg-type]

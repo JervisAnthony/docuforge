@@ -223,7 +223,9 @@ describe('batch workspace', () => {
 
   it.each([
     ['batch_packaging_failed', 'Retry packaging'],
+    ['batch_packaging_interrupted', 'Retry packaging'],
     ['batch_execution_failed', 'Retry batch'],
+    ['batch_execution_interrupted', 'Retry batch'],
     [null, 'Retry failed/cancelled items'],
   ])('uses the truthful recovery label for %s', async (code, label) => {
     const recoverable = snapshot({

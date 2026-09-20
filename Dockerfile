@@ -3,6 +3,7 @@ FROM python:3.13-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV HOME=/home/docuforge
+ENV DOCUFORGE_BATCH_STORAGE_DIRECTORY=/var/lib/docuforge
 
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
@@ -17,7 +18,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --gid 10001 docuforge \
-    && useradd --uid 10001 --gid docuforge --create-home --shell /usr/sbin/nologin docuforge
+    && useradd --uid 10001 --gid docuforge --create-home --shell /usr/sbin/nologin docuforge \
+    && mkdir -p /var/lib/docuforge \
+    && chown docuforge:docuforge /var/lib/docuforge
 
 WORKDIR /app
 
