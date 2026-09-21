@@ -65,3 +65,8 @@ export interface BatchSnapshot {
   can_recover: boolean
   can_download: boolean
 }
+
+export interface BatchSessionHandle {
+  snapshot: BatchSnapshot
+  accessToken: string
+}

@@ -31,7 +31,7 @@ function client(initial = snapshot()): ApiClient {
     getMetadata: vi.fn(),
     getHealth: vi.fn(),
     postMultipartForBlob: vi.fn(),
-    createBatch: vi.fn().mockResolvedValue(initial),
+    createBatch: vi.fn().mockResolvedValue({ snapshot: initial, accessToken: 'private-token' }),
     getBatchStatus: vi.fn().mockResolvedValue(initial),
     cancelBatch: vi.fn().mockResolvedValue(initial),
     recoverBatch: vi.fn().mockResolvedValue(initial),
@@ -75,7 +75,7 @@ describe('batch workspace', () => {
     expect(screen.getByText('1 / 2 processed')).toBeVisible()
 
     await act(async () => { await vi.advanceTimersByTimeAsync(800) })
-    expect(api.getBatchStatus).toHaveBeenCalledWith('batch-1')
+    expect(api.getBatchStatus).toHaveBeenCalledWith('batch-1', 'private-token')
     expect(screen.getAllByText('100%')).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Download ZIP' })).toBeEnabled()
     expect(screen.getByText('0002-second.jpg')).toBeVisible()
@@ -97,11 +97,15 @@ describe('batch workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Start batch' }))
     await screen.findByRole('button', { name: 'Cancel' })
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(api.cancelBatch).toHaveBeenCalledWith('batch-1', 'private-token')
     expect(await screen.findByText(/Cancellation requested/)).toBeVisible()
     expect(screen.getByText('cancelled')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Download ZIP' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Download ZIP' }))
+    await waitFor(() => expect(api.downloadBatch).toHaveBeenCalledWith('batch-1', 'private-token'))
+    expect(document.body).not.toHaveTextContent('private-token')
     fireEvent.click(screen.getByRole('button', { name: 'Retry failed/cancelled items' }))
-    await waitFor(() => expect(api.recoverBatch).toHaveBeenCalledWith('batch-1'))
+    await waitFor(() => expect(api.recoverBatch).toHaveBeenCalledWith('batch-1', 'private-token'))
   })
 
   it('submits the full resize and maximum-size compression configurations', async () => {
@@ -143,7 +147,7 @@ describe('batch workspace', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Status could not be refreshed.')
     fireEvent.click(screen.getByRole('button', { name: 'Retry status' }))
     await act(async () => Promise.resolve())
-    expect(api.getBatchStatus).toHaveBeenLastCalledWith('batch-1')
+    expect(api.getBatchStatus).toHaveBeenLastCalledWith('batch-1', 'private-token')
     expect(screen.getAllByText('100%')).toHaveLength(2)
   })
 

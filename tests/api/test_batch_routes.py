@@ -12,16 +12,23 @@ from fastapi.testclient import TestClient
 
 import docuforge.api.batches as batches_module
 from docuforge.api import create_app
+from docuforge.api.batch_access import BATCH_TOKEN_HEADER, hash_access_token
 from docuforge.api.batch_persistence import BatchPersistenceError
 from docuforge.api.config import ApiSettings
 from tests.api.image_test_support import make_image
 from tests.batch.test_document import RecordingEngine
 
 
-def wait_for_terminal(client: TestClient, location: str) -> dict[str, object]:
+def access_headers(token: str) -> dict[str, str]:
+    return {BATCH_TOKEN_HEADER: token}
+
+
+def wait_for_terminal(
+    client: TestClient, location: str, token: str
+) -> dict[str, object]:
     deadline = monotonic() + 5
     while monotonic() < deadline:
-        payload = client.get(location).json()
+        payload = client.get(location, headers=access_headers(token)).json()
         if payload["phase"] in {"ready", "error"}:
             return payload
         sleep(0.01)
@@ -57,6 +64,7 @@ def test_image_batch_routes_accept_order_poll_and_download(
         response = client.post(path, files=[*image_files("first.png", "second.png"), *fields])
         assert response.status_code == 202
         assert response.headers["location"].startswith("/api/v1/batches/")
+        token = response.headers[BATCH_TOKEN_HEADER]
         accepted = response.json()
         assert accepted["operation"] == operation
         assert [item["descriptor"] for item in accepted["items"]] == [
@@ -65,13 +73,16 @@ def test_image_batch_routes_accept_order_poll_and_download(
         ]
         assert all("path" not in item for item in accepted["items"])
 
-        final = wait_for_terminal(client, response.headers["location"])
+        final = wait_for_terminal(client, response.headers["location"], token)
         assert final["status"] == "completed"
         assert final["progress_percent"] == 100
         assert final["summary"]["processed"] == 2
         assert final["can_download"] is True
-        download = client.get(f"{response.headers['location']}/download")
+        download = client.get(
+            f"{response.headers['location']}/download", headers=access_headers(token)
+        )
         assert download.status_code == 200
+        assert download.headers["cache-control"] == "no-store"
         assert download.headers["content-type"] == "application/zip"
         assert "docuforge-batch-" in download.headers["content-disposition"]
         with ZipFile(BytesIO(download.content)) as archive:
@@ -101,7 +112,9 @@ def test_office_batch_allows_mixed_duplicate_and_unicode_names() -> None:
     with TestClient(app) as client:
         response = client.post("/api/v1/batches/office/to-pdf", files=files)
         assert response.status_code == 202
-        final = wait_for_terminal(client, response.headers["location"])
+        final = wait_for_terminal(
+            client, response.headers["location"], response.headers[BATCH_TOKEN_HEADER]
+        )
         assert [item["descriptor"] for item in final["items"]] == [
             "résumé.docx",
             "same.pptx",
@@ -126,7 +139,86 @@ def test_batch_validation_and_unknown_session_errors_are_safe() -> None:
         ]:
             response = method(f"/api/v1/batches/unknown{suffix}")
             assert response.status_code == 404
+            assert response.headers["cache-control"] == "no-store"
             assert response.json()["code"] == "batch_not_found"
+
+
+def test_batch_capability_header_is_private_and_required_for_all_routes() -> None:
+    with TestClient(create_app()) as client:
+        first = client.post(
+            "/api/v1/batches/images/convert",
+            files=[*image_files("one.png"), ("format", (None, "jpeg"))],
+        )
+        second = client.post(
+            "/api/v1/batches/images/convert",
+            files=[*image_files("two.png"), ("format", (None, "jpeg"))],
+        )
+        location = first.headers["location"]
+        token = first.headers[BATCH_TOKEN_HEADER]
+        other_token = second.headers[BATCH_TOKEN_HEADER]
+
+        assert first.status_code == 202
+        assert token and token not in first.text
+        assert hash_access_token(token) not in first.text
+        assert token not in location
+        assert "access_token" not in first.json()
+        assert "access_token_hash" not in first.json()
+        assert first.headers["cache-control"] == "no-store"
+        status = client.get(location, headers=access_headers(token))
+        assert status.status_code == 200
+        assert status.headers["cache-control"] == "no-store"
+        assert token not in status.text
+        assert hash_access_token(token) not in status.text
+
+        expected = {
+            "code": "batch_not_found",
+            "message": "The batch session was not found.",
+        }
+        for suffix, method in [
+            ("", client.get),
+            ("/cancel", client.post),
+            ("/recover", client.post),
+            ("/download", client.get),
+        ]:
+            for headers in (
+                {},
+                access_headers("wrong-token"),
+                access_headers("malformed token"),
+                access_headers(other_token),
+            ):
+                response = method(f"{location}{suffix}", headers=headers)
+                assert response.status_code == 404
+                assert response.headers["cache-control"] == "no-store"
+                assert response.json() == expected
+
+
+def test_custom_prefix_protected_route_uses_capability_header() -> None:
+    settings = ApiSettings(api_prefix="/custom")
+    with TestClient(create_app(settings)) as client:
+        accepted = client.post(
+            "/custom/batches/images/convert",
+            files=[*image_files("one.png"), ("format", (None, "jpeg"))],
+        )
+        location = accepted.headers["location"]
+        token = accepted.headers[BATCH_TOKEN_HEADER]
+        assert location.startswith("/custom/batches/")
+        missing = client.get(location)
+        assert missing.status_code == 404
+        assert missing.headers["cache-control"] == "no-store"
+        response = client.get(location, headers=access_headers(token))
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        final = wait_for_terminal(client, location, token)
+        assert final["status"] == "completed"
+        download = client.get(f"{location}/download", headers=access_headers(token))
+        assert download.status_code == 200
+        assert download.headers["cache-control"] == "no-store"
+        denied = client.get(f"{location}/download")
+        assert denied.status_code == 404
+        assert denied.headers["cache-control"] == "no-store"
+        unknown = client.get("/custom/batches/unknown")
+        assert unknown.status_code == 404
+        assert unknown.headers["cache-control"] == "no-store"
 
 
 def test_cancel_is_cooperative_idempotent_and_recovery_reuses_identity() -> None:
@@ -148,25 +240,35 @@ def test_cancel_is_cooperative_idempotent_and_recovery_reuses_identity() -> None
             files=[*image_files("one.png", "two.png"), ("format", (None, "jpeg"))],
         )
         location = response.headers["location"]
+        token = response.headers[BATCH_TOKEN_HEADER]
+        headers = access_headers(token)
         assert entered.wait(5)
-        first = client.post(f"{location}/cancel")
-        second = client.post(f"{location}/cancel")
+        first = client.post(f"{location}/cancel", headers=headers)
+        second = client.post(f"{location}/cancel", headers=headers)
         assert first.status_code == second.status_code == 202
+        assert first.headers["cache-control"] == second.headers["cache-control"] == "no-store"
         assert second.json()["cancellation_requested"] is True
         assert second.json()["phase"] == "cancelling"
         release.set()
-        cancelled = wait_for_terminal(client, location)
+        cancelled = wait_for_terminal(client, location, token)
         assert cancelled["status"] == "cancelled"
         assert cancelled["summary"]["cancelled"] == 2
-        assert client.get(f"{location}/download").json()["code"] == "batch_has_no_outputs"
+        no_outputs = client.get(f"{location}/download", headers=headers)
+        assert no_outputs.status_code == 409
+        assert no_outputs.json()["code"] == "batch_has_no_outputs"
+        assert no_outputs.headers["cache-control"] == "no-store"
 
-        recovered = client.post(f"{location}/recover")
+        recovered = client.post(f"{location}/recover", headers=headers)
         assert recovered.status_code == 202
+        assert recovered.headers["cache-control"] == "no-store"
         assert recovered.json()["attempt"] == 2
-        final = wait_for_terminal(client, location)
+        final = wait_for_terminal(client, location, token)
         assert final["id"] == cancelled["id"]
         assert final["status"] == "completed"
-        assert client.post(f"{location}/cancel").status_code == 409
+        state_error = client.post(f"{location}/cancel", headers=headers)
+        assert state_error.status_code == 409
+        assert state_error.json()["code"] == "batch_not_cancellable"
+        assert state_error.headers["cache-control"] == "no-store"
 
 
 def test_apps_do_not_share_batch_sessions() -> None:
@@ -177,7 +279,10 @@ def test_apps_do_not_share_batch_sessions() -> None:
             "/api/v1/batches/images/convert",
             files=[*image_files("one.png"), ("format", (None, "jpeg"))],
         )
-        assert second.get(response.headers["location"]).status_code == 404
+        assert second.get(
+            response.headers["location"],
+            headers=access_headers(response.headers[BATCH_TOKEN_HEADER]),
+        ).status_code == 404
 
 
 def test_packaging_status_does_not_offer_or_accept_cancellation() -> None:
@@ -201,16 +306,18 @@ def test_packaging_status_does_not_offer_or_accept_cancellation() -> None:
             files=[*image_files("one.png"), ("format", (None, "jpeg"))],
         )
         location = response.headers["location"]
+        token = response.headers[BATCH_TOKEN_HEADER]
+        headers = access_headers(token)
         assert entered.wait(5)
-        packaging = client.get(location)
+        packaging = client.get(location, headers=headers)
         assert packaging.status_code == 200
         assert packaging.json()["phase"] == "packaging"
         assert packaging.json()["can_cancel"] is False
-        rejected = client.post(f"{location}/cancel")
+        rejected = client.post(f"{location}/cancel", headers=headers)
         assert rejected.status_code == 409
         assert rejected.json()["code"] == "batch_not_cancellable"
         release.set()
-        assert wait_for_terminal(client, location)["phase"] == "ready"
+        assert wait_for_terminal(client, location, token)["phase"] == "ready"
 
 
 def test_durable_batch_status_location_and_download_survive_app_recreation(
@@ -224,17 +331,19 @@ def test_durable_batch_status_location_and_download_survive_app_recreation(
         )
         assert response.status_code == 202
         location = response.headers["location"]
+        token = response.headers[BATCH_TOKEN_HEADER]
+        headers = access_headers(token)
         batch_id = response.json()["id"]
         assert location == f"/api/v1/batches/{batch_id}"
-        assert wait_for_terminal(first, location)["phase"] == "ready"
+        assert wait_for_terminal(first, location, token)["phase"] == "ready"
 
     with TestClient(create_app(settings)) as second:
-        restored = second.get(location)
+        restored = second.get(location, headers=headers)
         assert restored.status_code == 200
         assert restored.json()["id"] == batch_id
         assert restored.json()["phase"] == "ready"
         assert all("path" not in item for item in restored.json()["items"])
-        download = second.get(f"{location}/download")
+        download = second.get(f"{location}/download", headers=headers)
         assert download.status_code == 200
         with ZipFile(BytesIO(download.content)) as archive:
             assert archive.namelist() == ["0001-one.jpg"]
@@ -292,30 +401,33 @@ def test_failed_durable_recover_preserves_terminal_state_and_zip(tmp_path: Path)
             files=[*image_files("one.png", "two.png"), ("format", (None, "jpeg"))],
         )
         location = accepted.headers["location"]
-        before = wait_for_terminal(client, location)
+        token = accepted.headers[BATCH_TOKEN_HEADER]
+        headers = access_headers(token)
+        before = wait_for_terminal(client, location, token)
         assert before["attempt"] == 1
         assert before["phase"] == "ready"
         assert before["can_recover"] is True
         assert before["can_download"] is True
-        zip_before = client.get(f"{location}/download").content
-        archive_path = app.state.batch_service.download_path(before["id"])
+        zip_before = client.get(f"{location}/download", headers=headers).content
+        archive_path = app.state.batch_service.download_path(before["id"], token)
 
         with patch.object(
             repository,
             "save",
             side_effect=BatchPersistenceError("private SQLite diagnostic"),
         ):
-            failed = client.post(f"{location}/recover")
+            failed = client.post(f"{location}/recover", headers=headers)
         assert failed.status_code == 503
         assert failed.json()["code"] == "batch_persistence_failed"
+        assert failed.headers["cache-control"] == "no-store"
         assert "private SQLite diagnostic" not in failed.text
-        assert client.get(location).json() == before
+        assert client.get(location, headers=headers).json() == before
         assert archive_path.is_file()
-        assert client.get(f"{location}/download").content == zip_before
+        assert client.get(f"{location}/download", headers=headers).content == zip_before
 
         missing_path[0].write_bytes(make_image())
-        retried = client.post(f"{location}/recover")
+        retried = client.post(f"{location}/recover", headers=headers)
         assert retried.status_code == 202
         assert retried.json()["attempt"] == 2
-        final = wait_for_terminal(client, location)
+        final = wait_for_terminal(client, location, token)
         assert final["status"] == "completed"

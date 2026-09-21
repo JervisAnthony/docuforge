@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from docuforge.api.batch_access import BATCH_TOKEN_HEADER
 from docuforge.api.batches import BatchExecutionService
 from docuforge.api.config import ApiSettings
 from docuforge.api.errors import register_error_handlers
@@ -52,12 +53,13 @@ def create_app(
             CORSMiddleware,
             allow_origins=list(resolved_settings.cors_allowed_origins),
             allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Accept", "Content-Type", REQUEST_ID_HEADER],
-            expose_headers=[REQUEST_ID_HEADER],
+            allow_headers=["Accept", "Content-Type", REQUEST_ID_HEADER, BATCH_TOKEN_HEADER],
+            expose_headers=[REQUEST_ID_HEADER, BATCH_TOKEN_HEADER],
         )
     application.add_middleware(
         ProductionMiddleware,
         environment=resolved_settings.environment,
+        api_prefix=resolved_settings.api_prefix,
     )
     register_error_handlers(application)
     application.include_router(

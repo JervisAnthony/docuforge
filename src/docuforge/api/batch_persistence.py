@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from threading import RLock
 from zipfile import BadZipFile, ZipFile
 
+from docuforge.api.batch_access import access_token_hash_is_valid
 from docuforge.batch import (
     Batch,
     BatchDocumentConvertRequest,
@@ -38,7 +39,7 @@ from docuforge.batch import (
 from docuforge.batch.document import _valid_preserved_pdf
 from docuforge.batch.image import _valid_preserved_image
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DATABASE_NAME = "batch-sessions.sqlite3"
 _PHASES = frozenset({"queued", "processing", "cancelling", "packaging", "ready", "error"})
 
@@ -52,6 +53,7 @@ class BatchSessionRecord:
     """One transactionally stored session record."""
 
     batch_id: str
+    access_token_hash: str | None
     operation: str
     attempt: int
     phase: str
@@ -98,13 +100,14 @@ class BatchSessionRepository:
     def _initialize(self) -> None:
         with self._lock, self._connection() as connection:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in {0, SCHEMA_VERSION}:
+            if version not in {0, 1, SCHEMA_VERSION}:
                 raise BatchPersistenceError("Unsupported batch persistence schema version.")
             if version == 0:
                 connection.execute("PRAGMA journal_mode = WAL")
                 connection.execute(
                     """CREATE TABLE batch_sessions (
                     batch_id TEXT PRIMARY KEY,
+                    access_token_hash TEXT NOT NULL,
                     schema_version INTEGER NOT NULL,
                     operation TEXT NOT NULL,
                     attempt INTEGER NOT NULL,
@@ -118,7 +121,21 @@ class BatchSessionRepository:
                     updated_at REAL NOT NULL
                     )"""
                 )
-                connection.execute("PRAGMA user_version = 1")
+                connection.execute("PRAGMA user_version = 2")
+            elif version == 1:
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "ALTER TABLE batch_sessions ADD COLUMN access_token_hash TEXT"
+                    )
+                    connection.execute("UPDATE batch_sessions SET schema_version = 2")
+                    connection.execute("PRAGMA user_version = 2")
+                    connection.commit()
+                except sqlite3.Error:
+                    connection.rollback()
+                    raise BatchPersistenceError(
+                        "Batch persistence schema migration failed."
+                    ) from None
 
     def add(self, record: BatchSessionRecord) -> None:
         self._write(record, insert=True)
@@ -130,16 +147,17 @@ class BatchSessionRepository:
         _validate_record(record)
         verb = "INSERT" if insert else "UPDATE"
         sql = (
-            "INSERT INTO batch_sessions (batch_id, schema_version, operation, attempt, phase, "
+            "INSERT INTO batch_sessions (batch_id, access_token_hash, schema_version, operation, attempt, phase, "
             "cancellation_requested, request_json, batch_json, result_json, session_error_json, "
-            "archive_available, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "archive_available, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             if insert
-            else "UPDATE batch_sessions SET schema_version=?, operation=?, attempt=?, phase=?, "
+            else "UPDATE batch_sessions SET access_token_hash=?, schema_version=?, operation=?, attempt=?, phase=?, "
             "cancellation_requested=?, request_json=?, batch_json=?, result_json=?, "
             "session_error_json=?, archive_available=?, updated_at=? WHERE batch_id=?"
         )
         insert_values = (
             record.batch_id,
+            record.access_token_hash,
             record.schema_version,
             record.operation,
             record.attempt,
@@ -170,13 +188,13 @@ class BatchSessionRepository:
             normalized = str(BatchId(batch_id))
             with self._lock, self._connection() as connection:
                 row = connection.execute(
-                    "SELECT batch_id, schema_version, operation, attempt, phase, "
+                    "SELECT batch_id, access_token_hash, schema_version, operation, attempt, phase, "
                     "cancellation_requested, request_json, batch_json, result_json, "
                     "session_error_json, archive_available, updated_at "
                     "FROM batch_sessions WHERE batch_id=?",
                     (normalized,),
                 ).fetchone()
-            return None if row is None else _record_from_row(row)
+            return None if row is None else _record_from_row(row, allow_legacy=True)
         except BatchPersistenceError:
             raise
         except (sqlite3.Error, ValueError) as error:
@@ -186,16 +204,27 @@ class BatchSessionRepository:
         try:
             with self._lock, self._connection() as connection:
                 rows = connection.execute(
-                    "SELECT batch_id, schema_version, operation, attempt, phase, "
+                    "SELECT batch_id, access_token_hash, schema_version, operation, attempt, phase, "
                     "cancellation_requested, request_json, batch_json, result_json, "
                     "session_error_json, archive_available, updated_at "
                     "FROM batch_sessions ORDER BY batch_id"
                 ).fetchall()
-            return tuple(_record_from_row(row) for row in rows)
+            return tuple(_record_from_row(row, allow_legacy=True) for row in rows)
         except BatchPersistenceError:
             raise
         except sqlite3.Error as error:
             raise BatchPersistenceError("Batch sessions could not be read.") from error
+
+    def list_legacy_batch_ids(self) -> tuple[str, ...]:
+        """Identify pre-token rows without decoding their untrusted metadata."""
+        try:
+            with self._lock, self._connection() as connection:
+                rows = connection.execute(
+                    "SELECT batch_id FROM batch_sessions WHERE access_token_hash IS NULL"
+                ).fetchall()
+            return tuple(str(BatchId(row[0])) for row in rows)
+        except (sqlite3.Error, TypeError, ValueError, InvalidBatchDefinitionError) as error:
+            raise BatchPersistenceError("Legacy batch sessions could not be identified.") from error
 
     def delete(self, batch_id: str) -> None:
         try:
@@ -331,10 +360,12 @@ def encode_record(
     archive_available: bool,
     updated_at: float,
     workspace: BatchSessionWorkspace,
+    access_token_hash: str,
 ) -> BatchSessionRecord:
     request_payload = _encode_request(request, workspace)
     return BatchSessionRecord(
         batch_id=str(batch.id),
+        access_token_hash=access_token_hash,
         operation=str(batch.operation),
         attempt=attempt,
         phase=phase,
@@ -703,7 +734,7 @@ def _require_keys(payload: dict[object, object], expected: set[str]) -> None:
         raise ValueError
 
 
-def _validate_record(record: BatchSessionRecord) -> None:
+def _validate_record(record: BatchSessionRecord, *, allow_legacy: bool = False) -> None:
     if (
         not isinstance(record, BatchSessionRecord)
         or type(record.schema_version) is not int
@@ -713,7 +744,12 @@ def _validate_record(record: BatchSessionRecord) -> None:
     try:
         BatchId(record.batch_id)
         if (
-            record.operation not in {
+            (record.access_token_hash is None and not allow_legacy)
+            or (
+                record.access_token_hash is not None
+                and not access_token_hash_is_valid(record.access_token_hash)
+            )
+            or record.operation not in {
                 "image.convert",
                 "image.resize",
                 "image.compress",
@@ -739,16 +775,19 @@ def _validate_record(record: BatchSessionRecord) -> None:
         raise BatchPersistenceError("Batch session record is invalid.") from error
 
 
-def _record_from_row(row: tuple[object, ...]) -> BatchSessionRecord:
+def _record_from_row(
+    row: tuple[object, ...], *, allow_legacy: bool = False
+) -> BatchSessionRecord:
     try:
         record = BatchSessionRecord(
-            batch_id=row[0], schema_version=row[1], operation=row[2], attempt=row[3],
-            phase=row[4], cancellation_requested=bool(row[5]), request_json=row[6],
-            batch_json=row[7], result_json=row[8], session_error_json=row[9],
-            archive_available=bool(row[10]), updated_at=row[11],
+            access_token_hash=row[1], schema_version=row[2], operation=row[3], attempt=row[4],
+            batch_id=row[0],
+            phase=row[5], cancellation_requested=bool(row[6]), request_json=row[7],
+            batch_json=row[8], result_json=row[9], session_error_json=row[10],
+            archive_available=bool(row[11]), updated_at=row[12],
         )
-        _validate_record(record)
-        if row[5] not in {0, 1} or row[10] not in {0, 1}:
+        _validate_record(record, allow_legacy=allow_legacy)
+        if row[6] not in {0, 1} or row[11] not in {0, 1}:
             raise ValueError
         return record
     except (TypeError, ValueError) as error:
