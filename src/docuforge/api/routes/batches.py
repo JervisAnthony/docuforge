@@ -205,6 +205,13 @@ def create_batch_router(
         _set_private_cache_control(response)
         return _response(service.get(batch_id, access_token))
 
+    @router.delete("/{batch_id}", status_code=204)
+    def delete_batch(
+        batch_id: str,
+        access_token: Annotated[str | None, Header(alias=BATCH_TOKEN_HEADER)] = None,
+    ) -> None:
+        service.delete_session(batch_id, access_token)
+
     @router.post("/{batch_id}/cancel", status_code=202, response_model=BatchStatusResponse)
     def cancel(
         response: Response,

@@ -35,7 +35,7 @@ def _is_private_batch_route(path: object, method: object, api_prefix: str) -> bo
     if not segments[0]:
         return False
     if len(segments) == 1:
-        return method == "GET"
+        return method in {"GET", "DELETE"}
     if len(segments) == 2:
         return (method == "POST" and segments[1] in {"cancel", "recover"}) or (
             method == "GET" and segments[1] == "download"

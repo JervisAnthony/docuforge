@@ -39,6 +39,11 @@ Interrupted active sessions receive a fresh recovery window when restored as an 
 Durable startup also removes unregistered UUID BatchId workspaces, including uploads left by a
 process failure before metadata registration, so rowless batch content does not remain unmanaged.
 
+Users may explicitly delete terminal sessions before TTL expiry. Durable deletion persists an
+internal DELETING tombstone before removing the workspace and metadata; startup finishes interrupted
+deletions before restoring sessions. TTL remains the automatic fallback. This is application-level
+removal and does not claim physical media overwriting or storage-provider backup deletion.
+
 ## Production storage
 
 The production image configures `DOCUFORGE_BATCH_STORAGE_DIRECTORY=/var/lib/docuforge` and grants
@@ -58,7 +63,7 @@ across replacement.
 - Status and error responses do not expose storage paths, SQL, serialized state, or database
   diagnostics.
 - SQLite stores only the SHA-256 access-token hash; plaintext capabilities are never persisted.
-- Batch files may remain on disk until terminal TTL expiry or internal expiry cleanup. Single-file
+- Batch files may remain on disk until explicit deletion, terminal TTL expiry, or internal expiry cleanup. Single-file
   request workspaces remain request-scoped.
 
 ## Boundary

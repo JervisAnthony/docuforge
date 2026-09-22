@@ -106,6 +106,7 @@ def test_batch_request_paths_are_redacted_without_rewriting_unrelated_uuids(
             (client.post, f"/custom/batches/{batch_id}/cancel"),
             (client.post, f"/custom/batches/{batch_id}/recover"),
             (client.get, f"/custom/batches/{batch_id}/download"),
+            (client.delete, f"/custom/batches/{batch_id}"),
             (client.get, f"/other/{batch_id}"),
             (client.post, "/custom/batches/images/convert"),
         ]:
@@ -116,11 +117,12 @@ def test_batch_request_paths_are_redacted_without_rewriting_unrelated_uuids(
         for record in caplog.records
         if record.name == REQUEST_LOGGER_NAME
     ]
-    assert paths[-6:] == [
+    assert paths[-7:] == [
         "/custom/batches/{batch_id}",
         "/custom/batches/{batch_id}/cancel",
         "/custom/batches/{batch_id}/recover",
         "/custom/batches/{batch_id}/download",
+        "/custom/batches/{batch_id}",
         f"/other/{batch_id}",
         "/custom/batches/images/convert",
     ]

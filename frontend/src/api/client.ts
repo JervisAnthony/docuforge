@@ -42,6 +42,7 @@ export interface ApiClient {
   cancelBatch(batchId: string, accessToken: string): Promise<BatchSnapshot>
   recoverBatch(batchId: string, accessToken: string): Promise<BatchSnapshot>
   downloadBatch(batchId: string, accessToken: string): Promise<BinaryResponse>
+  deleteBatch(batchId: string, accessToken: string): Promise<void>
 }
 
 export function createApiClient(
@@ -125,6 +126,13 @@ export function createApiClient(
         contentType: response.headers.get('content-type'),
         contentDisposition: response.headers.get('content-disposition'),
       }
+    },
+    async deleteBatch(batchId, accessToken) {
+      const response = await request(batchPath(batchId), {
+        method: 'DELETE',
+        headers: batchAccessHeaders(accessToken),
+      })
+      if (!response.ok) throw await createHttpError(response)
     },
     async postMultipartForBlob(path, formData) {
       const response = await request(path, {

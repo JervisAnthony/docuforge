@@ -36,6 +36,7 @@ function client(initial = snapshot()): ApiClient {
     cancelBatch: vi.fn().mockResolvedValue(initial),
     recoverBatch: vi.fn().mockResolvedValue(initial),
     downloadBatch: vi.fn().mockResolvedValue({ blob: new Blob(['zip']), contentType: 'application/zip', contentDisposition: 'attachment; filename="results.zip"' }),
+    deleteBatch: vi.fn().mockResolvedValue(undefined),
   }
 }
 
@@ -50,6 +51,47 @@ function deferred<T>() {
 afterEach(() => vi.useRealTimers())
 
 describe('batch workspace', () => {
+  it('confirms terminal deletion, clears session state, and keeps the token hidden', async () => {
+    const api = client(snapshot({ phase: 'ready', status: 'completed', can_cancel: false }))
+    render(<BatchToolWorkspace toolId="batch-image-convert" onBack={vi.fn()} client={api} />)
+    fireEvent.change(screen.getByLabelText('Image files'), { target: { files: [new File(['a'], 'one.png')] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Start batch' }))
+    const action = await screen.findByRole('button', { name: 'Delete batch' })
+    fireEvent.click(action)
+    expect(screen.getByText(/This cannot be undone/)).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Keep batch' }))
+    expect(screen.queryByRole('button', { name: 'Delete now' })).not.toBeInTheDocument()
+    fireEvent.click(action)
+    fireEvent.click(screen.getByRole('button', { name: 'Delete now' }))
+    await waitFor(() => expect(api.deleteBatch).toHaveBeenCalledWith('batch-1', 'private-token'))
+    expect(await screen.findByRole('status')).toHaveTextContent('Batch deleted from the server.')
+    expect(screen.queryByRole('region', { name: 'Batch status' })).not.toBeInTheDocument()
+    expect(screen.queryByText('one.png')).not.toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent('private-token')
+  })
+
+  it('preserves a terminal session and allows retry after deletion failure', async () => {
+    const api = client(snapshot({ phase: 'ready', status: 'completed', can_cancel: false }))
+    vi.mocked(api.deleteBatch).mockRejectedValueOnce(new Error('private')).mockResolvedValueOnce(undefined)
+    render(<BatchToolWorkspace toolId="batch-image-convert" onBack={vi.fn()} client={api} />)
+    fireEvent.change(screen.getByLabelText('Image files'), { target: { files: [new File(['a'], 'one.png')] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Start batch' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete batch' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete now' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('The batch could not be deleted')
+    expect(screen.getByRole('region', { name: 'Batch status' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete now' }))
+    await waitFor(() => expect(api.deleteBatch).toHaveBeenCalledTimes(2))
+  })
+
+  it('does not offer deletion while processing', async () => {
+    const api = client()
+    render(<BatchToolWorkspace toolId="batch-image-convert" onBack={vi.fn()} client={api} />)
+    fireEvent.change(screen.getByLabelText('Image files'), { target: { files: [new File(['a'], 'one.png')] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Start batch' }))
+    await screen.findByRole('button', { name: 'Cancel' })
+    expect(screen.queryByRole('button', { name: 'Delete batch' })).not.toBeInTheDocument()
+  })
   it('preserves selected order, submits configuration, polls, and renders terminal items', async () => {
     vi.useFakeTimers()
     const accepted = snapshot()

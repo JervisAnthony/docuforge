@@ -14,7 +14,7 @@ header. The `Location` header contains only the BatchId. Creation responses use
 ## Protected operations
 
 The same `X-DocuForge-Batch-Token` request header is required for status, cancellation, recovery,
-and ZIP download. Missing, malformed, or incorrect tokens have the same `404 batch_not_found`
+ZIP download, and explicit terminal-session deletion. Missing, malformed, or incorrect tokens have the same `404 batch_not_found`
 response as an unknown BatchId.
 
 ## Storage

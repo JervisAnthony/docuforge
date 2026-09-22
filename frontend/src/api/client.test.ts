@@ -148,6 +148,7 @@ describe('API client', () => {
       .mockResolvedValueOnce(jsonResponse(batch, { status: 202 }))
       .mockResolvedValueOnce(jsonResponse(batch, { status: 202 }))
       .mockResolvedValueOnce(new Response('zip', { headers: { 'Content-Type': 'application/zip' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
     const client = createApiClient('', fetchMock)
     await expect(client.createBatch('/api/v1/batches/images/convert', new FormData())).resolves.toEqual({
       snapshot: batch,
@@ -157,12 +158,14 @@ describe('API client', () => {
     await client.cancelBatch('batch-1', 'private-token')
     await client.recoverBatch('batch-1', 'private-token')
     await expect(client.downloadBatch('batch-1', 'private-token')).resolves.toMatchObject({ contentType: 'application/zip' })
+    await expect(client.deleteBatch('batch-1', 'private-token')).resolves.toBeUndefined()
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       '/api/v1/batches/images/convert',
       '/api/v1/batches/batch%2Funsafe',
       '/api/v1/batches/batch-1/cancel',
       '/api/v1/batches/batch-1/recover',
       '/api/v1/batches/batch-1/download',
+      '/api/v1/batches/batch-1',
     ])
     for (const [, init] of fetchMock.mock.calls.slice(1)) {
       expect(init?.headers).toMatchObject({ 'X-DocuForge-Batch-Token': 'private-token' })
@@ -170,6 +173,17 @@ describe('API client', () => {
     expect(fetchMock.mock.calls.map(([url]) => String(url)).join()).not.toContain('private-token')
     const creationBody = fetchMock.mock.calls[0]?.[1]?.body as FormData
     expect(Array.from(creationBody.values())).not.toContain('private-token')
+    expect(fetchMock.mock.calls.at(-1)?.[1]).toMatchObject({ method: 'DELETE' })
+    expect(fetchMock.mock.calls.at(-1)?.[1]).not.toHaveProperty('body')
+  })
+
+  it.each([404, 409, 503])('uses API errors for DELETE %s', async (status) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({ code: 'batch_deletion_failed', message: 'Retry the deletion.' }, { status }),
+    )
+    await expect(createApiClient('', fetchMock).deleteBatch('batch-1', 'private-token')).rejects.toMatchObject({
+      kind: 'http', status, code: 'batch_deletion_failed',
+    })
   })
 
   it('rejects a creation response without a nonblank capability header', async () => {

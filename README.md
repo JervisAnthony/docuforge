@@ -48,6 +48,7 @@ Single-file workflows remain stateless and use request-scoped temporary workspac
 workflows use TTL-bound session workspaces, and production may use restart-durable batch storage.
 Per-session capabilities protect retained batch access. Production request logs record operational
 metadata rather than uploaded contents and redact BatchIds from batch request paths.
+Capability holders can explicitly delete terminal retained batch sessions before TTL expiry.
 
 ## Local development
 
