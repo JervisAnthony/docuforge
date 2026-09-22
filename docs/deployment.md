@@ -46,9 +46,14 @@ Mount a persistent volume at `/var/lib/docuforge` when deployment-level batch du
 required. This remains single-process orchestration; do not run multiple API processes against the
 same executor state.
 
+Opening a Commit 56 schema-v1 database migrates it transactionally to schema v2. Pre-token rows
+and their BatchId workspaces are removed because no secure access capability was issued for them.
+
 For preview deployments, add the exact preview origin to
 `DOCUFORGE_CORS_ALLOWED_ORIGINS` as a comma-separated value. Do not use a wildcard origin for
 the public deployment.
+The explicit CORS allowlist permits and exposes `X-DocuForge-Batch-Token`, allowing the configured
+Vercel frontend to read the creation response header and send it on later protected requests.
 
 ## Operational behavior
 
@@ -59,6 +64,12 @@ origins, making support reports traceable to a single backend request.
 The production launcher emits one JSON request record per completed request. Records contain the
 request ID, method, path, status code, outcome, and duration, but intentionally omit query strings,
 uploaded filenames, request bodies, and document contents.
+BatchId UUIDs are normalized to `{batch_id}` in batch request paths. Access-token headers and
+token hashes are never logged.
+
+Batch capabilities are generated independently for each session; no deployment secret is needed.
+The frontend retains a capability only in component memory, so reloading or leaving the active
+workspace intentionally loses access to that anonymous batch.
 
 API responses also receive defensive browser headers. Production responses add
 `Strict-Transport-Security`; the header is intentionally omitted from local-mode responses.
@@ -89,6 +100,8 @@ After both deployments are available:
 6. Confirm the converted outputs download successfully.
 7. Confirm responses include `X-Request-ID` and the defensive response headers.
 8. Confirm an unknown web origin is not granted CORS access.
+9. Confirm batch creation exposes `X-DocuForge-Batch-Token` to the configured origin and protected
+   requests succeed without displaying or logging its value.
 
 Single-file uploads use request-scoped temporary workspaces. Batch uploads use isolated session
 workspaces and may remain on disk until terminal TTL expiry or internal expiry cleanup. They are

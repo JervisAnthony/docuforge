@@ -13,12 +13,34 @@ REQUEST_ID_HEADER = "X-Request-ID"
 REQUEST_LOGGER_NAME = "docuforge.api.requests"
 
 _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_BATCH_PATH_PATTERN = re.compile(
+    r"(?<=/batches/)[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?=/|$)"
+)
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 }
+
+
+def _is_private_batch_route(path: object, method: object, api_prefix: str) -> bool:
+    """Identify existing-session routes, including requests with unknown IDs."""
+    if not isinstance(path, str) or not isinstance(method, str):
+        return False
+    batch_root = f"{api_prefix.rstrip('/')}/batches/"
+    if not path.startswith(batch_root):
+        return False
+    segments = path[len(batch_root) :].split("/")
+    if not segments[0]:
+        return False
+    if len(segments) == 1:
+        return method == "GET"
+    if len(segments) == 2:
+        return (method == "POST" and segments[1] in {"cancel", "recover"}) or (
+            method == "GET" and segments[1] == "download"
+        )
+    return False
 
 
 def configure_request_logging() -> None:
@@ -44,9 +66,10 @@ def _resolve_request_id(scope: Scope) -> str:
 class ProductionMiddleware:
     """Attach operational headers and write structured request completion logs."""
 
-    def __init__(self, app: ASGIApp, *, environment: str) -> None:
+    def __init__(self, app: ASGIApp, *, environment: str, api_prefix: str) -> None:
         self.app = app
         self._is_production = environment.strip().lower() == "production"
+        self._api_prefix = api_prefix
         self._logger = logging.getLogger(REQUEST_LOGGER_NAME)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -58,6 +81,9 @@ class ProductionMiddleware:
         scope.setdefault("state", {})["request_id"] = request_id
         started_at = perf_counter()
         status_code = 500
+        private_batch_route = _is_private_batch_route(
+            scope.get("path"), scope.get("method"), self._api_prefix
+        )
 
         async def send_with_operational_headers(message: Message) -> None:
             nonlocal status_code
@@ -65,6 +91,8 @@ class ProductionMiddleware:
                 status_code = int(message["status"])
                 headers = MutableHeaders(scope=message)
                 headers[REQUEST_ID_HEADER] = request_id
+                if private_batch_route:
+                    headers["Cache-Control"] = "no-store"
                 for name, value in _SECURITY_HEADERS.items():
                     headers[name] = value
                 if self._is_production:
@@ -105,8 +133,13 @@ class ProductionMiddleware:
             "event": "http_request",
             "method": scope.get("method", ""),
             "outcome": outcome,
-            "path": scope.get("path", ""),
+            "path": _redact_batch_path(scope.get("path", "")),
             "request_id": request_id,
             "status_code": status_code,
         }
         self._logger.info(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+
+
+def _redact_batch_path(path: object) -> str:
+    """Redact only UUID identifiers directly beneath a batches path segment."""
+    return _BATCH_PATH_PATTERN.sub("{batch_id}", path if isinstance(path, str) else "")

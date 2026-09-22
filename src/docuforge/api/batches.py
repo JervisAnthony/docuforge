@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from threading import RLock
 from time import time
 
+from docuforge.api.batch_access import (
+    generate_access_token,
+    hash_access_token,
+    verify_access_token,
+)
 from docuforge.api.batch_persistence import (
     BatchPersistenceError,
     BatchSessionRepository,
@@ -90,8 +95,17 @@ class BatchExecutionSnapshot:
     can_download: bool
 
 
+@dataclass(frozen=True, slots=True)
+class BatchSessionGrant:
+    """A newly accepted session and its one-time plaintext capability."""
+
+    snapshot: BatchExecutionSnapshot
+    access_token: str = field(repr=False)
+
+
 @dataclass(slots=True)
 class _Session:
+    access_token_hash: str
     request: BatchExecutionRequest
     workspace: BatchSessionWorkspace
     batch: Batch
@@ -147,14 +161,16 @@ class BatchExecutionService:
 
     def create_session(
         self, request: BatchExecutionRequest, workspace: BatchSessionWorkspace
-    ) -> BatchExecutionSnapshot:
+    ) -> BatchSessionGrant:
         """Register and queue one new batch attempt."""
         if not isinstance(workspace, BatchSessionWorkspace):
             raise TypeError("workspace must be a BatchSessionWorkspace")
         batch = _initial_batch(request)
         if batch.id != workspace.batch_id:
             raise ValueError("batch request identity must match its workspace")
+        access_token = generate_access_token()
         session = _Session(
+            access_token_hash=hash_access_token(access_token),
             request=request,
             workspace=workspace,
             batch=batch,
@@ -182,16 +198,16 @@ class BatchExecutionService:
                     message="The batch session could not be persisted.",
                 ) from None
             self._executor.submit(self._execute, str(batch.id), False, False)
+            return BatchSessionGrant(self._snapshot_locked(session), access_token)
+
+    def get(self, batch_id: str, access_token: object) -> BatchExecutionSnapshot:
+        with self._lock:
+            session = self._get_authorized_locked(batch_id, access_token)
             return self._snapshot_locked(session)
 
-    def get(self, batch_id: str) -> BatchExecutionSnapshot:
+    def cancel(self, batch_id: str, access_token: object) -> BatchExecutionSnapshot:
         with self._lock:
-            session = self._get_locked(batch_id)
-            return self._snapshot_locked(session)
-
-    def cancel(self, batch_id: str) -> BatchExecutionSnapshot:
-        with self._lock:
-            session = self._get_locked(batch_id)
+            session = self._get_authorized_locked(batch_id, access_token)
             if (
                 session.phase is BatchExecutionPhase.CANCELLING
                 and session.cancellation.cancellation_requested
@@ -208,6 +224,7 @@ class BatchExecutionService:
                 candidate_cancellation = BatchCancellationToken()
                 candidate_cancellation.request_cancellation()
                 candidate = _Session(
+                    access_token_hash=session.access_token_hash,
                     request=session.request,
                     workspace=session.workspace,
                     batch=session.batch,
@@ -225,9 +242,9 @@ class BatchExecutionService:
             session.updated_at = updated_at
             return self._snapshot_locked(session)
 
-    def recover(self, batch_id: str) -> BatchExecutionSnapshot:
+    def recover(self, batch_id: str, access_token: object) -> BatchExecutionSnapshot:
         with self._lock:
-            session = self._get_locked(batch_id)
+            session = self._get_authorized_locked(batch_id, access_token)
             if session.phase not in {BatchExecutionPhase.READY, BatchExecutionPhase.ERROR}:
                 raise ApiError(
                     status_code=409,
@@ -263,6 +280,7 @@ class BatchExecutionService:
             next_cancellation = BatchCancellationToken()
             updated_at = self._clock()
             candidate = _Session(
+                access_token_hash=session.access_token_hash,
                 request=session.request,
                 workspace=session.workspace,
                 # A selective retry's preserved result belongs to the previous terminal
@@ -289,9 +307,9 @@ class BatchExecutionService:
             self._executor.submit(self._execute, batch_id, selective, packaging_only)
             return self._snapshot_locked(session)
 
-    def download_path(self, batch_id: str) -> Path:
+    def download_path(self, batch_id: str, access_token: object) -> Path:
         with self._lock:
-            session = self._get_locked(batch_id)
+            session = self._get_authorized_locked(batch_id, access_token)
             if session.phase in {
                 BatchExecutionPhase.QUEUED,
                 BatchExecutionPhase.PROCESSING,
@@ -442,10 +460,10 @@ class BatchExecutionService:
             **controls,
         )
 
-    def _get_locked(self, batch_id: str) -> _Session:
+    def _get_authorized_locked(self, batch_id: str, access_token: object) -> _Session:
         self._expire_locked()
         session = self._sessions.get(str(batch_id))
-        if session is None:
+        if session is None or not verify_access_token(access_token, session.access_token_hash):
             raise ApiError(
                 status_code=404,
                 code="batch_not_found",
@@ -482,6 +500,7 @@ class BatchExecutionService:
             return
         record = encode_record(
             request=session.request,
+            access_token_hash=session.access_token_hash,
             batch=session.batch,
             result=session.result,
             attempt=session.attempt,
@@ -505,6 +524,14 @@ class BatchExecutionService:
         if self._repository is None or self._sessions_root is None:
             return
         now = self._clock()
+        for batch_id in self._repository.list_legacy_batch_ids():
+            workspace_path = self._sessions_root / batch_id
+            if workspace_path.exists() or workspace_path.is_symlink():
+                workspace = BatchSessionWorkspace.durable_existing(
+                    self._sessions_root, BatchId(batch_id)
+                )
+                workspace.cleanup()
+            self._repository.delete(batch_id)
         records = self._repository.list_all()
         reconcile_orphan_workspaces(
             self._sessions_root, {record.batch_id for record in records}
@@ -528,6 +555,7 @@ class BatchExecutionService:
                     "Stored batch session could not be restored."
                 ) from decode_error
             session = _Session(
+                access_token_hash=record.access_token_hash,
                 request=request,  # type: ignore[arg-type]
                 workspace=workspace,
                 batch=batch,

@@ -44,7 +44,10 @@ pypdf / Pillow / PDFium
 
 The CLI and Python APIs call the same reusable conversion layer. Web routes adapt HTTP requests into converter requests rather than reimplementing PDF or image behavior.
 
-The deployed design is stateless. Uploads are processed inside request-scoped temporary workspaces and are not intentionally persisted by the application. Production request logs record operational metadata such as request ID, method, path, status, and duration rather than uploaded document contents.
+Single-file workflows remain stateless and use request-scoped temporary workspaces. Batch
+workflows use TTL-bound session workspaces, and production may use restart-durable batch storage.
+Per-session capabilities protect retained batch access. Production request logs record operational
+metadata rather than uploaded contents and redact BatchIds from batch request paths.
 
 ## Local development
 
@@ -164,6 +167,8 @@ item-level progress, cooperative cancellation, selective retry, and ZIP download
 configuration remains process-local. The production container uses a durable storage directory so
 terminal status, downloads, and recovery survive process restart while its filesystem remains; a
 persistent volume is required to survive container replacement. Execution remains single-process.
+Batch creation returns a private capability in `X-DocuForge-Batch-Token`; status, cancellation,
+recovery, and download require the same header. The token is never placed in a URL or JSON body.
 
 ## Web API
 

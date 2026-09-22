@@ -140,17 +140,23 @@ describe('API client', () => {
 
   it('creates, polls, controls, and downloads batches through explicit methods', async () => {
     const fetchMock = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse(batch, { status: 202 }))
+      .mockResolvedValueOnce(jsonResponse(batch, {
+        status: 202,
+        headers: { 'X-DocuForge-Batch-Token': 'private-token' },
+      }))
       .mockResolvedValueOnce(jsonResponse(batch))
       .mockResolvedValueOnce(jsonResponse(batch, { status: 202 }))
       .mockResolvedValueOnce(jsonResponse(batch, { status: 202 }))
       .mockResolvedValueOnce(new Response('zip', { headers: { 'Content-Type': 'application/zip' } }))
     const client = createApiClient('', fetchMock)
-    await expect(client.createBatch('/api/v1/batches/images/convert', new FormData())).resolves.toEqual(batch)
-    await client.getBatchStatus('batch/unsafe')
-    await client.cancelBatch('batch-1')
-    await client.recoverBatch('batch-1')
-    await expect(client.downloadBatch('batch-1')).resolves.toMatchObject({ contentType: 'application/zip' })
+    await expect(client.createBatch('/api/v1/batches/images/convert', new FormData())).resolves.toEqual({
+      snapshot: batch,
+      accessToken: 'private-token',
+    })
+    await client.getBatchStatus('batch/unsafe', 'private-token')
+    await client.cancelBatch('batch-1', 'private-token')
+    await client.recoverBatch('batch-1', 'private-token')
+    await expect(client.downloadBatch('batch-1', 'private-token')).resolves.toMatchObject({ contentType: 'application/zip' })
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       '/api/v1/batches/images/convert',
       '/api/v1/batches/batch%2Funsafe',
@@ -158,10 +164,27 @@ describe('API client', () => {
       '/api/v1/batches/batch-1/recover',
       '/api/v1/batches/batch-1/download',
     ])
+    for (const [, init] of fetchMock.mock.calls.slice(1)) {
+      expect(init?.headers).toMatchObject({ 'X-DocuForge-Batch-Token': 'private-token' })
+    }
+    expect(fetchMock.mock.calls.map(([url]) => String(url)).join()).not.toContain('private-token')
+    const creationBody = fetchMock.mock.calls[0]?.[1]?.body as FormData
+    expect(Array.from(creationBody.values())).not.toContain('private-token')
+  })
+
+  it('rejects a creation response without a nonblank capability header', async () => {
+    for (const headers of [undefined, { 'X-DocuForge-Batch-Token': '   ' }]) {
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse(batch, { status: 202, headers }),
+      )
+      await expect(
+        createApiClient('', fetchMock).createBatch('/api/v1/batches/images/convert', new FormData()),
+      ).rejects.toMatchObject({ kind: 'malformed-response', status: 202 })
+    }
   })
 
   it('rejects malformed batch status JSON', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ...batch, progress_percent: 101 }))
-    await expect(createApiClient('', fetchMock).getBatchStatus('batch-1')).rejects.toMatchObject({ kind: 'malformed-response' })
+    await expect(createApiClient('', fetchMock).getBatchStatus('batch-1', 'private-token')).rejects.toMatchObject({ kind: 'malformed-response' })
   })
 })

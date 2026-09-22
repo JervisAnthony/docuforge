@@ -2,10 +2,15 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, Response, UploadFile
+from fastapi import APIRouter, File, Form, Header, Response, UploadFile
 from fastapi.responses import FileResponse
 
-from docuforge.api.batches import BatchExecutionService, BatchExecutionSnapshot
+from docuforge.api.batch_access import BATCH_TOKEN_HEADER
+from docuforge.api.batches import (
+    BatchExecutionService,
+    BatchExecutionSnapshot,
+    BatchSessionGrant,
+)
 from docuforge.api.config import ApiSettings
 from docuforge.api.errors import ApiError
 from docuforge.api.images import (
@@ -177,7 +182,7 @@ def create_batch_router(
                 workspace.output_directory,
                 workspace.batch_id,
             )
-            snapshot = service.create_session(request, workspace)
+            grant = service.create_session(request, workspace)
         except InvalidBatchDefinitionError:
             workspace.cleanup()
             raise ApiError(
@@ -188,20 +193,35 @@ def create_batch_router(
         except BaseException:
             workspace.cleanup()
             raise
-        _set_location(response, settings, str(snapshot.batch.id))
-        return _response(snapshot)
+        _set_creation_headers(response, settings, grant)
+        return _response(grant.snapshot)
 
     @router.get("/{batch_id}", response_model=BatchStatusResponse)
-    def get_status(batch_id: str) -> BatchStatusResponse:
-        return _response(service.get(batch_id))
+    def get_status(
+        response: Response,
+        batch_id: str,
+        access_token: Annotated[str | None, Header(alias=BATCH_TOKEN_HEADER)] = None,
+    ) -> BatchStatusResponse:
+        _set_private_cache_control(response)
+        return _response(service.get(batch_id, access_token))
 
     @router.post("/{batch_id}/cancel", status_code=202, response_model=BatchStatusResponse)
-    def cancel(batch_id: str) -> BatchStatusResponse:
-        return _response(service.cancel(batch_id))
+    def cancel(
+        response: Response,
+        batch_id: str,
+        access_token: Annotated[str | None, Header(alias=BATCH_TOKEN_HEADER)] = None,
+    ) -> BatchStatusResponse:
+        _set_private_cache_control(response)
+        return _response(service.cancel(batch_id, access_token))
 
     @router.post("/{batch_id}/recover", status_code=202, response_model=BatchStatusResponse)
-    def recover(batch_id: str) -> BatchStatusResponse:
-        return _response(service.recover(batch_id))
+    def recover(
+        response: Response,
+        batch_id: str,
+        access_token: Annotated[str | None, Header(alias=BATCH_TOKEN_HEADER)] = None,
+    ) -> BatchStatusResponse:
+        _set_private_cache_control(response)
+        return _response(service.recover(batch_id, access_token))
 
     @router.get(
         "/{batch_id}/download",
@@ -215,12 +235,16 @@ def create_batch_router(
             409: {"model": ApiErrorResponse},
         },
     )
-    def download(batch_id: str) -> FileResponse:
-        path = service.download_path(batch_id)
+    def download(
+        batch_id: str,
+        access_token: Annotated[str | None, Header(alias=BATCH_TOKEN_HEADER)] = None,
+    ) -> FileResponse:
+        path = service.download_path(batch_id, access_token)
         return FileResponse(
             path,
             media_type="application/zip",
             filename=f"docuforge-batch-{batch_id}.zip",
+            headers={"Cache-Control": "no-store"},
         )
 
     return router
@@ -247,7 +271,7 @@ async def _create_image_session(
         request = request_factory(  # type: ignore[operator]
             items, workspace.output_directory, workspace.batch_id
         )
-        snapshot = service.create_session(request, workspace)
+        grant = service.create_session(request, workspace)
     except InvalidBatchDefinitionError:
         workspace.cleanup()
         raise ApiError(
@@ -258,13 +282,21 @@ async def _create_image_session(
     except BaseException:
         workspace.cleanup()
         raise
-    _set_location(response, settings, str(snapshot.batch.id))
-    return _response(snapshot)
+    _set_creation_headers(response, settings, grant)
+    return _response(grant.snapshot)
 
 
-def _set_location(response: Response, settings: ApiSettings, batch_id: str) -> None:
+def _set_creation_headers(
+    response: Response, settings: ApiSettings, grant: BatchSessionGrant
+) -> None:
     prefix = "" if settings.api_prefix == "/" else settings.api_prefix
-    response.headers["Location"] = f"{prefix}/batches/{batch_id}"
+    response.headers["Location"] = f"{prefix}/batches/{grant.snapshot.batch.id}"
+    response.headers[BATCH_TOKEN_HEADER] = grant.access_token
+    _set_private_cache_control(response)
+
+
+def _set_private_cache_control(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store"
 
 
 def _response(snapshot: BatchExecutionSnapshot) -> BatchStatusResponse:
@@ -321,7 +353,16 @@ def _response(snapshot: BatchExecutionSnapshot) -> BatchStatusResponse:
 
 def _batch_responses() -> dict[int | str, dict[str, object]]:
     return {
-        202: {"model": BatchStatusResponse, "description": "Batch accepted."},
+        202: {
+            "model": BatchStatusResponse,
+            "description": "Batch accepted; the access capability is returned once in the response header.",
+            "headers": {
+                BATCH_TOKEN_HEADER: {
+                    "description": "Capability required for later access to this batch.",
+                    "schema": {"type": "string"},
+                }
+            },
+        },
         400: {"model": ApiErrorResponse, "description": "Invalid batch request."},
         413: {"model": ApiErrorResponse, "description": "Upload limit exceeded."},
         415: {"model": ApiErrorResponse, "description": "Unsupported upload extension."},

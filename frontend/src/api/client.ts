@@ -3,11 +3,13 @@ import type {
   ApiHealth,
   ApiMetadata,
   BatchSnapshot,
+  BatchSessionHandle,
   BinaryResponse,
 } from './types'
 
 type ApiClientErrorKind = 'network' | 'http' | 'malformed-response'
 type FetchImplementation = typeof fetch
+export const BATCH_TOKEN_HEADER = 'X-DocuForge-Batch-Token'
 
 export class ApiClientError extends Error {
   readonly kind: ApiClientErrorKind
@@ -35,11 +37,11 @@ export interface ApiClient {
   getMetadata(): Promise<ApiMetadata>
   getHealth(): Promise<ApiHealth>
   postMultipartForBlob(path: string, formData: FormData): Promise<BinaryResponse>
-  createBatch(path: string, formData: FormData): Promise<BatchSnapshot>
-  getBatchStatus(batchId: string): Promise<BatchSnapshot>
-  cancelBatch(batchId: string): Promise<BatchSnapshot>
-  recoverBatch(batchId: string): Promise<BatchSnapshot>
-  downloadBatch(batchId: string): Promise<BinaryResponse>
+  createBatch(path: string, formData: FormData): Promise<BatchSessionHandle>
+  getBatchStatus(batchId: string, accessToken: string): Promise<BatchSnapshot>
+  cancelBatch(batchId: string, accessToken: string): Promise<BatchSnapshot>
+  recoverBatch(batchId: string, accessToken: string): Promise<BatchSnapshot>
+  downloadBatch(batchId: string, accessToken: string): Promise<BinaryResponse>
 }
 
 export function createApiClient(
@@ -85,16 +87,37 @@ export function createApiClient(
   return {
     getMetadata: () => requestJson('/api/v1', isApiMetadata),
     getHealth: () => requestJson('/api/v1/health', isApiHealth),
-    createBatch: (path, formData) =>
-      requestJson(path, isBatchSnapshot, { method: 'POST', body: formData }),
-    getBatchStatus: (batchId) => requestJson(batchPath(batchId), isBatchSnapshot),
-    cancelBatch: (batchId) =>
-      requestJson(`${batchPath(batchId)}/cancel`, isBatchSnapshot, { method: 'POST' }),
-    recoverBatch: (batchId) =>
-      requestJson(`${batchPath(batchId)}/recover`, isBatchSnapshot, { method: 'POST' }),
-    async downloadBatch(batchId) {
+    async createBatch(path, formData) {
+      const response = await request(path, {
+        method: 'POST',
+        body: formData,
+        headers: { Accept: 'application/json' },
+      })
+      if (!response.ok) throw await createHttpError(response)
+      const snapshot = await parseJson(response)
+      const accessToken = response.headers.get(BATCH_TOKEN_HEADER)
+      if (!isBatchSnapshot(snapshot) || !accessToken?.trim()) {
+        throw new ApiClientError('The API returned an unexpected response.', {
+          kind: 'malformed-response',
+          status: response.status,
+        })
+      }
+      return { snapshot, accessToken }
+    },
+    getBatchStatus: (batchId, accessToken) => requestJson(
+      batchPath(batchId), isBatchSnapshot, { headers: batchAccessHeaders(accessToken) },
+    ),
+    cancelBatch: (batchId, accessToken) =>
+      requestJson(`${batchPath(batchId)}/cancel`, isBatchSnapshot, {
+        method: 'POST', headers: batchAccessHeaders(accessToken),
+      }),
+    recoverBatch: (batchId, accessToken) =>
+      requestJson(`${batchPath(batchId)}/recover`, isBatchSnapshot, {
+        method: 'POST', headers: batchAccessHeaders(accessToken),
+      }),
+    async downloadBatch(batchId, accessToken) {
       const response = await request(`${batchPath(batchId)}/download`, {
-        headers: { Accept: 'application/zip' },
+        headers: { Accept: 'application/zip', ...batchAccessHeaders(accessToken) },
       })
       if (!response.ok) throw await createHttpError(response)
       return {
@@ -186,6 +209,10 @@ function isApiErrorPayload(value: unknown): value is ApiErrorPayload {
 
 function batchPath(batchId: string): string {
   return `/api/v1/batches/${encodeURIComponent(batchId)}`
+}
+
+function batchAccessHeaders(accessToken: string): Record<string, string> {
+  return { [BATCH_TOKEN_HEADER]: accessToken }
 }
 
 const ITEM_STATUSES = new Set(['pending', 'running', 'completed', 'failed', 'cancelled'])

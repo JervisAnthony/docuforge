@@ -12,6 +12,7 @@ from zipfile import ZipFile
 from PIL import Image
 
 from docuforge.api.batches import BatchExecutionPhase, BatchExecutionService
+from docuforge.api.errors import ApiError
 from docuforge.batch import BatchImageConvertRequest, BatchImageInput
 from docuforge.converters.office import LibreOfficeEngine
 
@@ -45,9 +46,9 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
                 "jpg",
                 workspace.batch_id,
             )
-            first.create_session(request, workspace)
-            _wait_ready(first, str(request.batch_id))
-            _verify_archive(first.download_path(str(request.batch_id)))
+            grant = first.create_session(request, workspace)
+            _wait_ready(first, str(request.batch_id), grant.access_token)
+            _verify_archive(first.download_path(str(request.batch_id), grant.access_token))
             first.shutdown()
 
             second = BatchExecutionService(
@@ -55,10 +56,17 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
                 max_workers=1,
                 storage_directory=storage,
             )
-            restored = second.get(str(request.batch_id))
+            restored = second.get(str(request.batch_id), grant.access_token)
             if restored.phase is not BatchExecutionPhase.READY:
                 raise BatchPersistenceSmokeError("restored batch was not ready")
-            _verify_archive(second.download_path(str(request.batch_id)))
+            _verify_archive(second.download_path(str(request.batch_id), grant.access_token))
+            try:
+                second.get(str(request.batch_id), "wrong-token")
+            except ApiError as error:
+                if error.status_code != 404 or error.code != "batch_not_found":
+                    raise BatchPersistenceSmokeError("wrong token was not safely rejected") from None
+            else:
+                raise BatchPersistenceSmokeError("wrong token was accepted")
             second.shutdown()
     except BatchPersistenceSmokeError:
         raise
@@ -67,10 +75,12 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
     return ("batch-session-restart",)
 
 
-def _wait_ready(service: BatchExecutionService, batch_id: str) -> None:
+def _wait_ready(
+    service: BatchExecutionService, batch_id: str, access_token: str
+) -> None:
     deadline = monotonic() + 15
     while monotonic() < deadline:
-        snapshot = service.get(batch_id)
+        snapshot = service.get(batch_id, access_token)
         if snapshot.phase is BatchExecutionPhase.READY:
             return
         if snapshot.phase is BatchExecutionPhase.ERROR:

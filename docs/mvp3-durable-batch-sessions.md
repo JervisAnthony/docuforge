@@ -14,6 +14,10 @@ session directory has per-item `inputs/`, deterministic `outputs/`, and `result.
 versioned, explicit JSON metadata and relative artifact paths; absolute filesystem paths are never
 authoritative persisted state.
 
+Durability does not make BatchId sufficient authority. See
+[Private batch access](mvp3-batch-access.md) for the per-session capability required to read or
+control a retained session.
+
 ## Restart behavior
 
 - READY sessions restore their status and validated ZIP download without reconversion.
@@ -53,6 +57,7 @@ across replacement.
 - Files are published and validated before metadata references them.
 - Status and error responses do not expose storage paths, SQL, serialized state, or database
   diagnostics.
+- SQLite stores only the SHA-256 access-token hash; plaintext capabilities are never persisted.
 - Batch files may remain on disk until terminal TTL expiry or internal expiry cleanup. Single-file
   request workspaces remain request-scoped.
 

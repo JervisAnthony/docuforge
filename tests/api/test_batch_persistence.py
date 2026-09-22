@@ -16,6 +16,7 @@ from PIL import Image
 
 import docuforge.api.batch_persistence as persistence_module
 import docuforge.api.batches as batches_module
+from docuforge.api.batch_access import hash_access_token
 from docuforge.api.batch_persistence import (
     DATABASE_NAME,
     SCHEMA_VERSION,
@@ -72,10 +73,15 @@ def image_request(
     return workspace, request
 
 
-def wait_for(runner: BatchExecutionService, batch_id: str, phase: BatchExecutionPhase):
+def wait_for(
+    runner: BatchExecutionService,
+    batch_id: str,
+    access_token: str,
+    phase: BatchExecutionPhase,
+):
     deadline = monotonic() + 5
     while monotonic() < deadline:
-        snapshot = runner.get(batch_id)
+        snapshot = runner.get(batch_id, access_token)
         if snapshot.phase is phase:
             return snapshot
         sleep(0.01)
@@ -85,6 +91,7 @@ def wait_for(runner: BatchExecutionService, batch_id: str, phase: BatchExecution
 def record(batch_id: str) -> BatchSessionRecord:
     return BatchSessionRecord(
         batch_id=batch_id,
+        access_token_hash="0" * 64,
         operation="image.convert",
         attempt=1,
         phase="queued",
@@ -128,6 +135,133 @@ def test_repository_reopens_and_rejects_duplicate_or_newer_schema(tmp_path: Path
         connection.execute("PRAGMA user_version = 99")
     with pytest.raises(BatchPersistenceError, match="Unsupported"):
         BatchSessionRepository(newer)
+
+
+def test_version_one_database_migrates_and_legacy_session_is_removed(
+    tmp_path: Path,
+) -> None:
+    batch_id = "12121212-1212-4212-8212-121212121212"
+    database = tmp_path / DATABASE_NAME
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """CREATE TABLE batch_sessions (
+            batch_id TEXT PRIMARY KEY,
+            schema_version INTEGER NOT NULL,
+            operation TEXT NOT NULL,
+            attempt INTEGER NOT NULL,
+            phase TEXT NOT NULL,
+            cancellation_requested INTEGER NOT NULL,
+            request_json TEXT NOT NULL,
+            batch_json TEXT NOT NULL,
+            result_json TEXT,
+            session_error_json TEXT,
+            archive_available INTEGER NOT NULL,
+            updated_at REAL NOT NULL
+            )"""
+        )
+        connection.execute("CREATE TABLE operator_notes (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO operator_notes VALUES ('keep')")
+        connection.execute(
+            "INSERT INTO batch_sessions VALUES (?, 1, 'image.convert', 1, "
+            "'queued', 0, '{}', '{}', NULL, NULL, 0, 100.0)",
+            (batch_id,),
+        )
+        connection.execute("PRAGMA user_version = 1")
+    workspace = tmp_path / "sessions" / batch_id
+    (workspace / "inputs").mkdir(parents=True)
+    (workspace / "outputs").mkdir()
+    (workspace / "inputs" / "private-upload.bin").write_bytes(b"private")
+
+    repository = BatchSessionRepository(tmp_path)
+    migrated = repository.get(batch_id)
+    assert migrated is not None
+    assert migrated.schema_version == 2
+    assert migrated.access_token_hash is None
+    assert repository.list_legacy_batch_ids() == (batch_id,)
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("SELECT value FROM operator_notes").fetchone()[0] == "keep"
+
+    runner = service(tmp_path)
+    assert repository.get(batch_id) is None
+    assert not workspace.exists()
+    runner.shutdown()
+
+
+def test_legacy_cleanup_failure_keeps_metadata_for_next_startup(tmp_path: Path) -> None:
+    batch_id = "13131313-1313-4313-8313-131313131313"
+    with sqlite3.connect(tmp_path / DATABASE_NAME) as connection:
+        connection.execute(
+            """CREATE TABLE batch_sessions (
+            batch_id TEXT PRIMARY KEY,
+            schema_version INTEGER NOT NULL,
+            operation TEXT NOT NULL,
+            attempt INTEGER NOT NULL,
+            phase TEXT NOT NULL,
+            cancellation_requested INTEGER NOT NULL,
+            request_json TEXT NOT NULL,
+            batch_json TEXT NOT NULL,
+            result_json TEXT,
+            session_error_json TEXT,
+            archive_available INTEGER NOT NULL,
+            updated_at REAL NOT NULL
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO batch_sessions VALUES (?, 1, 'image.convert', 1, "
+            "'queued', 0, '{}', '{}', NULL, NULL, 0, 100.0)",
+            (batch_id,),
+        )
+        connection.execute("PRAGMA user_version = 1")
+    repository = BatchSessionRepository(tmp_path)
+    workspace = tmp_path / "sessions" / batch_id
+    (workspace / "inputs").mkdir(parents=True)
+    (workspace / "outputs").mkdir()
+
+    with patch.object(
+        BatchSessionWorkspace, "cleanup", side_effect=BatchPersistenceError("safe cleanup failure")
+    ), pytest.raises(BatchPersistenceError, match="safe cleanup failure"):
+        service(tmp_path)
+
+    assert repository.list_legacy_batch_ids() == (batch_id,)
+    assert workspace.is_dir()
+    runner = service(tmp_path)
+    assert repository.list_legacy_batch_ids() == ()
+    assert not workspace.exists()
+    runner.shutdown()
+
+
+def test_failed_version_one_migration_preserves_database_and_version(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / DATABASE_NAME
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE operator_notes (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO operator_notes VALUES ('keep')")
+        connection.execute("PRAGMA user_version = 1")
+
+    with pytest.raises(BatchPersistenceError, match="schema migration failed") as error:
+        BatchSessionRepository(tmp_path)
+    assert "ALTER TABLE" not in str(error.value)
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("SELECT value FROM operator_notes").fetchone()[0] == "keep"
+
+
+@pytest.mark.parametrize(
+    "access_token_hash",
+    [None, "", "0" * 63, "0" * 65, "A" * 64, "g" * 64],
+)
+def test_repository_rejects_noncanonical_access_token_hashes(
+    tmp_path: Path, access_token_hash: object
+) -> None:
+    repository = BatchSessionRepository(tmp_path)
+    value = replace(
+        record("23232323-2323-4232-8232-232323232323"),
+        access_token_hash=access_token_hash,
+    )
+    with pytest.raises(BatchPersistenceError):
+        repository.add(value)  # type: ignore[arg-type]
 
 
 def test_repository_parameterizes_unusual_json_and_hides_sql_details(tmp_path: Path) -> None:
@@ -213,15 +347,15 @@ def test_startup_removes_only_orphan_and_preserves_referenced_workspace(
 ) -> None:
     first = service(tmp_path)
     referenced, request = image_request(first, ("one.png",))
-    first.create_session(request, referenced)
-    wait_for(first, str(request.batch_id), BatchExecutionPhase.READY)
+    grant = first.create_session(request, referenced)
+    wait_for(first, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
     first.shutdown()
     orphan = BatchSessionWorkspace.durable_new(tmp_path / "sessions")
 
     second = service(tmp_path)
     assert not orphan.path.exists()
     assert referenced.path.is_dir()
-    assert second.get(str(request.batch_id)).phase is BatchExecutionPhase.READY
+    assert second.get(str(request.batch_id), grant.access_token).phase is BatchExecutionPhase.READY
     second.shutdown()
 
 
@@ -300,7 +434,7 @@ def test_request_and_batch_serialization_round_trip(tmp_path: Path, kind: str) -
     persisted = encode_record(
         request=request, batch=batch, result=None, attempt=1, phase="queued",
         cancellation_requested=False, session_error=None, archive_available=False,
-        updated_at=10.0, workspace=workspace,
+        updated_at=10.0, workspace=workspace, access_token_hash="0" * 64,
     )
     restored_request, restored_batch, result, error = decode_record(persisted, workspace)
     assert type(restored_request) is type(request)
@@ -323,6 +457,7 @@ def test_batch_item_states_round_trip(tmp_path: Path) -> None:
         request=request, batch=batch, result=None, attempt=2, phase="processing",
         cancellation_requested=True, session_error=("safe_error", "Safe error."),
         archive_available=False, updated_at=20.0, workspace=workspace,
+        access_token_hash="0" * 64,
     )
     _, restored, _, error = decode_record(persisted, workspace)
     assert [item.status for item in restored.items] == [
@@ -362,7 +497,7 @@ def test_typed_document_result_round_trip_revalidates_pdf(tmp_path: Path) -> Non
     persisted = encode_record(
         request=request, batch=batch, result=result, attempt=1, phase="ready",
         cancellation_requested=False, session_error=None, archive_available=False,
-        updated_at=20.0, workspace=workspace,
+        updated_at=20.0, workspace=workspace, access_token_hash="0" * 64,
     )
     _, _, restored, _ = decode_record(persisted, workspace)
     assert isinstance(restored, BatchDocumentResult)
@@ -383,6 +518,7 @@ def test_serialization_rejects_unsafe_persisted_input_paths(
         request=request, batch=_initial_batch(request), result=None, attempt=1,
         phase="queued", cancellation_requested=False, session_error=None,
         archive_available=False, updated_at=10.0, workspace=workspace,
+        access_token_hash="0" * 64,
     )
     payload = json.loads(persisted.request_json)
     payload["items"][0]["input"] = unsafe
@@ -394,7 +530,7 @@ def test_serialization_rejects_unsafe_persisted_input_paths(
 @pytest.mark.parametrize(
     ("changes"),
     [
-        {"schema_version": 2},
+        {"schema_version": 1},
         {"batch_id": "not-a-uuid"},
         {"operation": "unknown.operation"},
         {"phase": "unknown"},
@@ -409,6 +545,7 @@ def test_decoder_rejects_unknown_record_identity_and_enums(
         request=request, batch=_initial_batch(request), result=None, attempt=1,
         phase="queued", cancellation_requested=False, session_error=None,
         archive_available=False, updated_at=10.0, workspace=workspace,
+        access_token_hash="0" * 64,
     )
     with pytest.raises(BatchPersistenceError):
         decode_record(replace(persisted, **changes), workspace)
@@ -422,6 +559,7 @@ def test_decoder_rejects_unknown_status_duplicate_ids_and_bad_format(tmp_path: P
         request=request, batch=_initial_batch(request), result=None, attempt=1,
         phase="queued", cancellation_requested=False, session_error=None,
         archive_available=False, updated_at=10.0, workspace=workspace,
+        access_token_hash="0" * 64,
     )
     batch_payload = json.loads(persisted.batch_json)
     batch_payload["items"][0]["status"] = "unknown"
@@ -451,8 +589,8 @@ def test_decoder_rejects_impossible_terminal_error_and_archive_combinations(
     runner = service(tmp_path)
     workspace, request = image_request(runner, ("one.png",))
     request.items[0].input_path.write_bytes(b"corrupt image")
-    runner.create_session(request, workspace)
-    wait_for(runner, str(request.batch_id), BatchExecutionPhase.READY)
+    grant = runner.create_session(request, workspace)
+    wait_for(runner, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
     repository = BatchSessionRepository(tmp_path)
     persisted = repository.get(str(request.batch_id))
     assert persisted is not None and persisted.result_json is not None
@@ -475,17 +613,32 @@ def test_decoder_rejects_impossible_terminal_error_and_archive_combinations(
 def test_ready_status_and_download_survive_restart(tmp_path: Path) -> None:
     first = service(tmp_path)
     workspace, request = image_request(first)
-    first.create_session(request, workspace)
-    wait_for(first, str(request.batch_id), BatchExecutionPhase.READY)
-    archive_before = first.download_path(str(request.batch_id)).read_bytes()
+    grant = first.create_session(request, workspace)
+    wait_for(first, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
+    archive_before = first.download_path(str(request.batch_id), grant.access_token).read_bytes()
+    persisted = BatchSessionRepository(tmp_path).get(str(request.batch_id))
+    assert persisted is not None
+    assert persisted.access_token_hash == hash_access_token(grant.access_token)
+    serialized = "".join(
+        value
+        for value in (
+            persisted.request_json,
+            persisted.batch_json,
+            persisted.result_json,
+            persisted.session_error_json,
+        )
+        if value is not None
+    )
+    assert grant.access_token not in serialized
+    assert grant.access_token.encode() not in (tmp_path / DATABASE_NAME).read_bytes()
     first.shutdown()
     assert workspace.path.exists()
 
     second = service(tmp_path)
-    restored = second.get(str(request.batch_id))
+    restored = second.get(str(request.batch_id), grant.access_token)
     assert restored.phase is BatchExecutionPhase.READY
-    assert second.download_path(str(request.batch_id)).read_bytes() == archive_before
-    with ZipFile(second.download_path(str(request.batch_id))) as archive:
+    assert second.download_path(str(request.batch_id), grant.access_token).read_bytes() == archive_before
+    with ZipFile(second.download_path(str(request.batch_id), grant.access_token)) as archive:
         assert archive.namelist() == ["0001-one.jpg", "0002-two.jpg"]
     second.shutdown()
 
@@ -495,8 +648,8 @@ def test_selective_recovery_survives_restart(tmp_path: Path) -> None:
     workspace, request = image_request(first)
     failed_input = request.items[0].input_path
     failed_input.write_bytes(b"corrupt image")
-    first.create_session(request, workspace)
-    partial = wait_for(first, str(request.batch_id), BatchExecutionPhase.READY)
+    grant = first.create_session(request, workspace)
+    partial = wait_for(first, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
     assert partial.can_recover
     preserved = workspace.output_directory / "0002-two.jpg"
     before = preserved.read_bytes()
@@ -504,8 +657,8 @@ def test_selective_recovery_survives_restart(tmp_path: Path) -> None:
 
     second = service(tmp_path)
     Image.new("RGB", (8, 8), "green").save(failed_input)
-    assert second.recover(str(request.batch_id)).attempt == 2
-    final = wait_for(second, str(request.batch_id), BatchExecutionPhase.READY)
+    assert second.recover(str(request.batch_id), grant.access_token).attempt == 2
+    final = wait_for(second, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
     assert final.batch.completed_count == 2
     assert preserved.read_bytes() == before
     second.shutdown()
@@ -516,19 +669,19 @@ def test_committed_selective_recovery_state_is_restart_safe(tmp_path: Path) -> N
     workspace, request = image_request(first)
     failed_input = request.items[0].input_path
     failed_input.write_bytes(b"corrupt image")
-    first.create_session(request, workspace)
-    wait_for(first, str(request.batch_id), BatchExecutionPhase.READY)
+    grant = first.create_session(request, workspace)
+    wait_for(first, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
     Image.new("RGB", (8, 8), "green").save(failed_input)
 
     with patch.object(first._executor, "submit") as submit:
-        queued = first.recover(str(request.batch_id))
+        queued = first.recover(str(request.batch_id), grant.access_token)
     assert queued.attempt == 2
     assert queued.phase is BatchExecutionPhase.QUEUED
     submit.assert_called_once()
     first.shutdown()
 
     second = service(tmp_path)
-    interrupted = second.get(str(request.batch_id))
+    interrupted = second.get(str(request.batch_id), grant.access_token)
     assert interrupted.phase is BatchExecutionPhase.ERROR
     assert interrupted.session_error.code == "batch_execution_interrupted"
     second.shutdown()
@@ -542,8 +695,8 @@ def test_packaging_failure_and_recovery_survive_restart(tmp_path: Path) -> None:
         "package_batch_outputs",
         side_effect=BatchProcessingError("private"),
     ):
-        first.create_session(request, workspace)
-        failed = wait_for(first, str(request.batch_id), BatchExecutionPhase.ERROR)
+        grant = first.create_session(request, workspace)
+        failed = wait_for(first, str(request.batch_id), grant.access_token, BatchExecutionPhase.ERROR)
     assert failed.session_error.code == "batch_packaging_failed"
     output = workspace.output_directory / "0001-one.jpg"
     before = output.read_bytes()
@@ -555,8 +708,8 @@ def test_packaging_failure_and_recovery_survive_restart(tmp_path: Path) -> None:
         "batch_convert_images",
         side_effect=AssertionError("must not reconvert"),
     ):
-        second.recover(str(request.batch_id))
-        wait_for(second, str(request.batch_id), BatchExecutionPhase.READY)
+        second.recover(str(request.batch_id), grant.access_token)
+        wait_for(second, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
     assert output.read_bytes() == before
     second.shutdown()
 
@@ -564,8 +717,8 @@ def test_packaging_failure_and_recovery_survive_restart(tmp_path: Path) -> None:
 def test_interrupted_packaging_restores_packaging_only_recovery(tmp_path: Path) -> None:
     first = service(tmp_path)
     workspace, request = image_request(first, ("one.png",))
-    first.create_session(request, workspace)
-    wait_for(first, str(request.batch_id), BatchExecutionPhase.READY)
+    grant = first.create_session(request, workspace)
+    wait_for(first, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
     first.shutdown()
     repository = BatchSessionRepository(tmp_path)
     persisted = repository.get(str(request.batch_id))
@@ -574,7 +727,7 @@ def test_interrupted_packaging_restores_packaging_only_recovery(tmp_path: Path) 
     workspace.archive_path.unlink()
 
     second = service(tmp_path)
-    interrupted = second.get(str(request.batch_id))
+    interrupted = second.get(str(request.batch_id), grant.access_token)
     assert interrupted.phase is BatchExecutionPhase.ERROR
     assert interrupted.session_error.code == "batch_packaging_interrupted"
     with patch.object(
@@ -582,21 +735,21 @@ def test_interrupted_packaging_restores_packaging_only_recovery(tmp_path: Path) 
         "batch_convert_images",
         side_effect=AssertionError("must not reconvert"),
     ):
-        second.recover(str(request.batch_id))
-        wait_for(second, str(request.batch_id), BatchExecutionPhase.READY)
+        second.recover(str(request.batch_id), grant.access_token)
+        wait_for(second, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
     second.shutdown()
 
 
 def test_corrupt_archive_restores_packaging_recoverable_error(tmp_path: Path) -> None:
     first = service(tmp_path)
     workspace, request = image_request(first, ("one.png",))
-    first.create_session(request, workspace)
-    wait_for(first, str(request.batch_id), BatchExecutionPhase.READY)
+    grant = first.create_session(request, workspace)
+    wait_for(first, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
     first.shutdown()
     workspace.archive_path.write_bytes(b"not a zip")
 
     second = service(tmp_path)
-    restored = second.get(str(request.batch_id))
+    restored = second.get(str(request.batch_id), grant.access_token)
     assert restored.phase is BatchExecutionPhase.ERROR
     assert restored.session_error.code == "batch_packaging_failed"
     assert restored.can_recover
@@ -607,20 +760,22 @@ def test_interrupted_processing_restores_safe_error_and_full_retry(tmp_path: Pat
     seed = service(tmp_path)
     workspace, request = image_request(seed, ("one.png",))
     repository = BatchSessionRepository(tmp_path)
+    access_token = "test-access-token"
     repository.add(encode_record(
         request=request, batch=_initial_batch(request), result=None, attempt=1,
         phase="processing", cancellation_requested=False, session_error=None,
         archive_available=False, updated_at=10.0, workspace=workspace,
+        access_token_hash=hash_access_token(access_token),
     ))
     seed.shutdown()
 
     restored = service(tmp_path)
-    interrupted = restored.get(str(request.batch_id))
+    interrupted = restored.get(str(request.batch_id), access_token)
     assert interrupted.phase is BatchExecutionPhase.ERROR
     assert interrupted.session_error.code == "batch_execution_interrupted"
     assert interrupted.can_cancel is False and interrupted.can_recover is True
-    assert restored.recover(str(request.batch_id)).attempt == 2
-    wait_for(restored, str(request.batch_id), BatchExecutionPhase.READY)
+    assert restored.recover(str(request.batch_id), access_token).attempt == 2
+    wait_for(restored, str(request.batch_id), access_token, BatchExecutionPhase.READY)
     restored.shutdown()
 
 
@@ -628,8 +783,8 @@ def test_persisted_ttl_removes_metadata_and_files_after_restart(tmp_path: Path) 
     now = [100.0]
     first = service(tmp_path, terminal_ttl_seconds=10, clock=lambda: now[0])
     workspace, request = image_request(first, ("one.png",))
-    first.create_session(request, workspace)
-    wait_for(first, str(request.batch_id), BatchExecutionPhase.READY)
+    grant = first.create_session(request, workspace)
+    wait_for(first, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
     first.shutdown()
     now[0] = 111.0
 

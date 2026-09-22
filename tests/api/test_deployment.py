@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from docuforge.api import ApiSettings, create_app
+from docuforge.api.batch_access import BATCH_TOKEN_HEADER
 
 
 def test_settings_load_production_environment(monkeypatch) -> None:
@@ -30,13 +31,15 @@ def test_configured_cors_allows_known_frontend_origin() -> None:
         headers={
             "Origin": "https://app.example.com",
             "Access-Control-Request-Method": "GET",
-            "Access-Control-Request-Headers": "X-Request-ID",
+            "Access-Control-Request-Headers": f"X-Request-ID, {BATCH_TOKEN_HEADER}",
         },
     )
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "https://app.example.com"
     assert "X-Request-ID" in response.headers["access-control-allow-headers"]
+    assert BATCH_TOKEN_HEADER in response.headers["access-control-allow-headers"]
+    assert response.headers["access-control-allow-headers"] != "*"
 
 
 def test_configured_cors_exposes_request_id_to_known_frontend_origin() -> None:
@@ -50,7 +53,9 @@ def test_configured_cors_exposes_request_id_to_known_frontend_origin() -> None:
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "https://app.example.com"
-    assert response.headers["access-control-expose-headers"] == "X-Request-ID"
+    exposed = response.headers["access-control-expose-headers"]
+    assert "X-Request-ID" in exposed
+    assert BATCH_TOKEN_HEADER in exposed
     assert response.headers["x-request-id"]
 
 

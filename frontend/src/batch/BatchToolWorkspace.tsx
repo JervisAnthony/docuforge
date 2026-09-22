@@ -27,6 +27,7 @@ export function BatchToolWorkspace({ toolId, onBack, client = apiClient }: Batch
   const inFlightRef = useRef(false)
   const mountedRef = useRef(true)
   const pollTimerRef = useRef<number | null>(null)
+  const accessTokenRef = useRef<string | null>(null)
   const tool = toolById(toolId)
   const [files, setFiles] = useState<File[]>([])
   const [format, setFormat] = useState<ImageFormat>('jpeg')
@@ -51,7 +52,7 @@ export function BatchToolWorkspace({ toolId, onBack, client = apiClient }: Batch
   }, [])
 
   useEffect(() => {
-    if (!snapshot || snapshot.phase === 'ready' || snapshot.phase === 'error' || error) return
+    if (!snapshot || !accessTokenRef.current || snapshot.phase === 'ready' || snapshot.phase === 'error' || error) return
     let active = true
     pollTimerRef.current = window.setTimeout(async () => {
       pollTimerRef.current = null
@@ -59,7 +60,7 @@ export function BatchToolWorkspace({ toolId, onBack, client = apiClient }: Batch
       inFlightRef.current = true
       if (mountedRef.current) setBusy(true)
       try {
-        const next = await client.getBatchStatus(snapshot.id)
+        const next = await client.getBatchStatus(snapshot.id, accessTokenRef.current as string)
         if (active) setSnapshot(next)
       } catch (caught: unknown) {
         if (active) setError(errorMessage(caught, 'Status could not be refreshed.'))
@@ -117,7 +118,9 @@ export function BatchToolWorkspace({ toolId, onBack, client = apiClient }: Batch
     }
     setError(null)
     try {
-      setSnapshot(await client.createBatch(tool.endpoint, data))
+      const handle = await client.createBatch(tool.endpoint, data)
+      accessTokenRef.current = handle.accessToken
+      setSnapshot(handle.snapshot)
     } catch (caught: unknown) {
       setError(errorMessage(caught, 'The batch could not be started.'))
     } finally {
@@ -126,14 +129,15 @@ export function BatchToolWorkspace({ toolId, onBack, client = apiClient }: Batch
   }
 
   async function update(action: 'cancel' | 'recover' | 'status') {
-    if (!snapshot || !beginRequest()) return
+    const accessToken = accessTokenRef.current
+    if (!snapshot || !accessToken || !beginRequest()) return
     setError(null)
     try {
       const next = action === 'cancel'
-        ? await client.cancelBatch(snapshot.id)
+        ? await client.cancelBatch(snapshot.id, accessToken)
         : action === 'recover'
-          ? await client.recoverBatch(snapshot.id)
-          : await client.getBatchStatus(snapshot.id)
+          ? await client.recoverBatch(snapshot.id, accessToken)
+          : await client.getBatchStatus(snapshot.id, accessToken)
       setSnapshot(next)
     } catch (caught: unknown) {
       setError(errorMessage(caught, 'The batch request could not be completed.'))
@@ -143,10 +147,11 @@ export function BatchToolWorkspace({ toolId, onBack, client = apiClient }: Batch
   }
 
   async function download() {
-    if (!snapshot?.can_download || !beginRequest()) return
+    const accessToken = accessTokenRef.current
+    if (!snapshot?.can_download || !accessToken || !beginRequest()) return
     setError(null)
     try {
-      const response = await client.downloadBatch(snapshot.id)
+      const response = await client.downloadBatch(snapshot.id, accessToken)
       downloadBlob(
         response.blob,
         filenameFromContentDisposition(response.contentDisposition, `docuforge-batch-${snapshot.id}.zip`),
