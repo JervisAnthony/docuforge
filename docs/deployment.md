@@ -46,6 +46,13 @@ Mount a persistent volume at `/var/lib/docuforge` when deployment-level batch du
 required. This remains single-process orchestration; do not run multiple API processes against the
 same executor state.
 
+DocuForge enforces that boundary with an exclusive owner lock at
+`/var/lib/docuforge/batch-storage.lock`. The first process using a durable root starts normally;
+another worker or replica using that same root fails durable-storage initialization immediately.
+The lock file is stable metadata and is expected to remain after shutdown or a crash. Do not delete
+it to resolve startup contention. Stop the process that owns the storage root, then start the
+replacement. Independent processes may use different durable roots.
+
 Opening a Commit 56 schema-v1 database migrates it transactionally to schema v2. Pre-token rows
 and their BatchId workspaces are removed because no secure access capability was issued for them.
 

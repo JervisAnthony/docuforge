@@ -9,10 +9,11 @@ completed MVP2 batch roadmap.
 
 ## Storage model
 
-The configured root contains `batch-sessions.sqlite3` and `sessions/<BatchId>/`. Each UUID-backed
-session directory has per-item `inputs/`, deterministic `outputs/`, and `result.zip`. SQLite stores
-versioned, explicit JSON metadata and relative artifact paths; absolute filesystem paths are never
-authoritative persisted state.
+The configured root contains the stable `batch-storage.lock` owner-lock file,
+`batch-sessions.sqlite3`, and `sessions/<BatchId>/`. Each UUID-backed session directory has per-item
+`inputs/`, deterministic `outputs/`, and `result.zip`. SQLite stores versioned, explicit JSON
+metadata and relative artifact paths; absolute filesystem paths are never authoritative persisted
+state.
 
 Durability does not make BatchId sufficient authority. See
 [Private batch access](mvp3-batch-access.md) for the per-session capability required to read or
@@ -68,6 +69,11 @@ across replacement.
 
 ## Boundary
 
-This is durable single-process orchestration. It is not distributed execution, multi-worker
-coordination, queue-backed processing, leasing, or cross-process cancellation. One DocuForge API
-process owns the bounded in-process executor.
+This is durable single-process orchestration. One DocuForge API process owns the bounded in-process
+executor and holds an exclusive operating-system lock for the durable storage root throughout the
+service lifetime. A competing process fails during startup before it opens SQLite or restores
+sessions. This does not provide distributed execution, multi-worker coordination, queue-backed
+processing, leasing, heartbeats, fencing, or cross-process cancellation.
+
+See [Durable storage ownership](mvp3-durable-storage-ownership.md) for lock lifecycle and operator
+guidance.
