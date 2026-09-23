@@ -54,6 +54,7 @@ For preview deployments, add the exact preview origin to
 the public deployment.
 The explicit CORS allowlist permits and exposes `X-DocuForge-Batch-Token`, allowing the configured
 Vercel frontend to read the creation response header and send it on later protected requests.
+The method allowlist includes DELETE for explicit terminal batch deletion.
 
 ## Operational behavior
 
@@ -104,7 +105,7 @@ After both deployments are available:
    requests succeed without displaying or logging its value.
 
 Single-file uploads use request-scoped temporary workspaces. Batch uploads use isolated session
-workspaces and may remain on disk until terminal TTL expiry or internal expiry cleanup. They are
-not permanent records.
+workspaces and may remain on disk until explicit deletion, terminal TTL expiry, or internal expiry
+cleanup. Deletion removes DocuForge-managed session files and metadata at the application level.
 Office and OCR processing remains inside the Railway API container and does not use an external
 conversion or OCR service.

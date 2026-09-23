@@ -5,6 +5,7 @@ from docuforge.ops.batch_persistence_smoke import BatchPersistenceSmokeError
 def test_batch_persistence_smoke_runs_real_restart_cycle() -> None:
     assert batch_persistence_smoke.run_batch_persistence_smoke() == (
         "batch-session-restart",
+        "batch-session-delete",
     )
 
 
@@ -12,12 +13,13 @@ def test_batch_persistence_smoke_cli_success(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         batch_persistence_smoke,
         "run_batch_persistence_smoke",
-        lambda: ("batch-session-restart",),
+        lambda: ("batch-session-restart", "batch-session-delete"),
     )
     assert batch_persistence_smoke.main() == 0
     assert capsys.readouterr().out.splitlines() == [
         "PASS batch-session-restart",
-        "Durable batch persistence smoke passed: 1 check",
+        "PASS batch-session-delete",
+        "Durable batch persistence smoke passed: 2 checks",
     ]
 
 

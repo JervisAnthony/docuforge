@@ -18,10 +18,10 @@ Every conversion check uses a small generated, non-sensitive fixture. The Office
 parseable PDF and the OCR result must be valid UTF-8; OCR text is not benchmarked for exact
 recognition.
 
-The CI **Production runtime image** job also runs a synthetic durable batch restart check inside
-the production container. It verifies non-root SQLite/workspace access and ZIP download after
-service recreation with the same in-process capability and confirms a wrong capability is
-rejected. Its output remains generic and never prints capability values. Public Production Smoke
+The CI **Production runtime image** job also runs synthetic durable batch restart and deletion checks
+inside the production container. It reports `PASS batch-session-restart` and
+`PASS batch-session-delete`, verifies non-root SQLite/workspace access, and confirms a wrong
+capability is rejected. Its output remains generic and never prints capability values. Public Production Smoke
 does not restart the deployed Railway service.
 
 Normal pushes and pull requests do not send traffic to the public deployment.

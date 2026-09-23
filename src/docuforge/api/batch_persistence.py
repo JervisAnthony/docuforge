@@ -41,7 +41,7 @@ from docuforge.batch.image import _valid_preserved_image
 
 SCHEMA_VERSION = 2
 DATABASE_NAME = "batch-sessions.sqlite3"
-_PHASES = frozenset({"queued", "processing", "cancelling", "packaging", "ready", "error"})
+_PHASES = frozenset({"queued", "processing", "cancelling", "packaging", "ready", "error", "deleting"})
 
 
 class BatchPersistenceError(RuntimeError):
@@ -226,6 +226,17 @@ class BatchSessionRepository:
         except (sqlite3.Error, TypeError, ValueError, InvalidBatchDefinitionError) as error:
             raise BatchPersistenceError("Legacy batch sessions could not be identified.") from error
 
+    def list_deleting_batch_ids(self) -> tuple[str, ...]:
+        """Find committed deletion intents without decoding session contents."""
+        try:
+            with self._lock, self._connection() as connection:
+                rows = connection.execute(
+                    "SELECT batch_id FROM batch_sessions WHERE phase=?", ("deleting",)
+                ).fetchall()
+            return tuple(str(BatchId(row[0])) for row in rows)
+        except (sqlite3.Error, TypeError, ValueError, InvalidBatchDefinitionError) as error:
+            raise BatchPersistenceError("Deleting batch sessions could not be identified.") from error
+
     def delete(self, batch_id: str) -> None:
         try:
             normalized = str(BatchId(batch_id))
@@ -305,6 +316,23 @@ class BatchSessionWorkspace:
         except OSError as error:
             raise BatchPersistenceError("Batch workspace could not be removed.") from error
         self._cleaned = True
+
+
+def cleanup_durable_workspace(sessions_root: Path, batch_id: str) -> None:
+    """Remove a possibly partial workspace for a committed deletion intent."""
+    path = sessions_root / str(BatchId(batch_id))
+    try:
+        node = path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise BatchPersistenceError("Batch workspace could not be removed.") from error
+    if stat.S_ISLNK(node.st_mode) or not stat.S_ISDIR(node.st_mode):
+        raise BatchPersistenceError("Batch workspace could not be removed.")
+    try:
+        shutil.rmtree(path)
+    except OSError as error:
+        raise BatchPersistenceError("Batch workspace could not be removed.") from error
 
 
 def prepare_durable_storage(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from threading import RLock
@@ -20,6 +20,7 @@ from docuforge.api.batch_persistence import (
     BatchSessionRepository,
     BatchSessionWorkspace,
     archive_is_valid,
+    cleanup_durable_workspace,
     decode_record,
     encode_record,
     prepare_durable_storage,
@@ -71,6 +72,7 @@ class BatchExecutionPhase(str, Enum):
     PACKAGING = "packaging"
     READY = "ready"
     ERROR = "error"
+    DELETING = "deleting"
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,6 +337,36 @@ class BatchExecutionService:
                 )
             return session.archive_path
 
+    def delete_session(self, batch_id: str, access_token: object) -> None:
+        """Delete a terminal session after committing irreversible deletion intent."""
+        with self._lock:
+            session = self._get_authorized_locked(batch_id, access_token, allow_deleting=True)
+            if session.phase not in {
+                BatchExecutionPhase.READY,
+                BatchExecutionPhase.ERROR,
+                BatchExecutionPhase.DELETING,
+            }:
+                raise ApiError(
+                    status_code=409,
+                    code="batch_not_deletable",
+                    message="The batch must finish or be cancelled before it can be deleted.",
+                )
+            if session.phase is not BatchExecutionPhase.DELETING:
+                candidate = replace(
+                    session, phase=BatchExecutionPhase.DELETING, updated_at=self._clock()
+                )
+                self._persist_or_api_error(candidate)
+                session.phase = candidate.phase
+                session.updated_at = candidate.updated_at
+            try:
+                self._finalize_deletion_locked(str(batch_id), session)
+            except BatchPersistenceError:
+                raise ApiError(
+                    status_code=503,
+                    code="batch_deletion_failed",
+                    message="The batch could not be deleted. Retry the deletion.",
+                ) from None
+
     def shutdown(self) -> None:
         """Cooperatively stop work while retaining durable sessions."""
         with self._lock:
@@ -460,10 +492,16 @@ class BatchExecutionService:
             **controls,
         )
 
-    def _get_authorized_locked(self, batch_id: str, access_token: object) -> _Session:
+    def _get_authorized_locked(
+        self, batch_id: str, access_token: object, *, allow_deleting: bool = False
+    ) -> _Session:
         self._expire_locked()
         session = self._sessions.get(str(batch_id))
-        if session is None or not verify_access_token(access_token, session.access_token_hash):
+        if (
+            session is None
+            or (session.phase is BatchExecutionPhase.DELETING and not allow_deleting)
+            or not verify_access_token(access_token, session.access_token_hash)
+        ):
             raise ApiError(
                 status_code=404,
                 code="batch_not_found",
@@ -480,10 +518,18 @@ class BatchExecutionService:
             and now - session.updated_at >= self._terminal_ttl_seconds
         ]
         for batch_id in expired:
-            session = self._sessions.pop(batch_id)
-            if self._repository is not None:
-                self._repository.delete(batch_id)
-            session.workspace.cleanup()
+            session = self._sessions[batch_id]
+            candidate = replace(session, phase=BatchExecutionPhase.DELETING, updated_at=now)
+            self._persist_locked(candidate)
+            session.phase = candidate.phase
+            session.updated_at = now
+            self._finalize_deletion_locked(batch_id, session)
+
+    def _finalize_deletion_locked(self, batch_id: str, session: _Session) -> None:
+        session.workspace.cleanup()
+        if self._repository is not None:
+            self._repository.delete(batch_id)
+        self._sessions.pop(batch_id, None)
 
     def _persist_or_api_error(self, session: _Session) -> None:
         try:
@@ -532,6 +578,9 @@ class BatchExecutionService:
                 )
                 workspace.cleanup()
             self._repository.delete(batch_id)
+        for batch_id in self._repository.list_deleting_batch_ids():
+            cleanup_durable_workspace(self._sessions_root, batch_id)
+            self._repository.delete(batch_id)
         records = self._repository.list_all()
         reconcile_orphan_workspaces(
             self._sessions_root, {record.batch_id for record in records}
@@ -546,8 +595,9 @@ class BatchExecutionService:
                     phase in {BatchExecutionPhase.READY, BatchExecutionPhase.ERROR}
                     and now - record.updated_at >= self._terminal_ttl_seconds
                 ):
+                    self._repository.save(replace(record, phase="deleting", updated_at=now))
+                    cleanup_durable_workspace(self._sessions_root, record.batch_id)
                     self._repository.delete(record.batch_id)
-                    workspace.cleanup()
                     continue
                 request, batch, result, error = decode_record(record, workspace)
             except (TypeError, ValueError) as decode_error:

@@ -39,6 +39,8 @@ export function BatchToolWorkspace({ toolId, onBack, client = apiClient }: Batch
   const [targetKilobytes, setTargetKilobytes] = useState('')
   const [snapshot, setSnapshot] = useState<BatchSnapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [deleteConfirmation, setDeleteConfirmation] = useState(false)
+  const [success, setSuccess] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [pollRevision, setPollRevision] = useState(0)
 
@@ -117,6 +119,8 @@ export function BatchToolWorkspace({ toolId, onBack, client = apiClient }: Batch
       }
     }
     setError(null)
+    setSuccess(null)
+    setDeleteConfirmation(false)
     try {
       const handle = await client.createBatch(tool.endpoint, data)
       accessTokenRef.current = handle.accessToken
@@ -158,6 +162,24 @@ export function BatchToolWorkspace({ toolId, onBack, client = apiClient }: Batch
       )
     } catch (caught: unknown) {
       setError(errorMessage(caught, 'The ZIP could not be downloaded.'))
+    } finally {
+      endRequest()
+    }
+  }
+
+  async function deleteBatch() {
+    const accessToken = accessTokenRef.current
+    if (!snapshot || !accessToken || !beginRequest()) return
+    setError(null)
+    try {
+      await client.deleteBatch(snapshot.id, accessToken)
+      accessTokenRef.current = null
+      setSnapshot(null)
+      setFiles([])
+      setDeleteConfirmation(false)
+      setSuccess('Batch deleted from the server.')
+    } catch (caught: unknown) {
+      setError(errorMessage(caught, 'The batch could not be deleted. Retry the deletion.'))
     } finally {
       endRequest()
     }
@@ -235,7 +257,17 @@ export function BatchToolWorkspace({ toolId, onBack, client = apiClient }: Batch
           ) : null}
           {!snapshot ? (
             <div className="workflow-actions"><button className="button button--primary" type="submit" disabled={!valid || busy}>{busy ? 'Starting…' : 'Start batch'}</button></div>
-          ) : <BatchStatusView snapshot={snapshot} busy={busy} onCancel={() => void update('cancel')} onRecover={() => void update('recover')} onDownload={() => void download()} />}
+          ) : <BatchStatusView snapshot={snapshot} busy={busy} onCancel={() => void update('cancel')} onRecover={() => void update('recover')} onDownload={() => void download()} onDelete={() => setDeleteConfirmation(true)} />}
+          {deleteConfirmation && snapshot ? (
+            <div className="workflow-feedback" role="group" aria-label="Confirm batch deletion">
+              <p>Delete this batch and its retained files? This cannot be undone.</p>
+              <div className="workflow-actions">
+                <button className="button button--danger" type="button" disabled={busy} onClick={() => void deleteBatch()}>Delete now</button>
+                <button className="button button--secondary" type="button" disabled={busy} onClick={() => setDeleteConfirmation(false)}>Keep batch</button>
+              </div>
+            </div>
+          ) : null}
+          {success ? <p className="workflow-feedback" role="status">{success}</p> : null}
           {error ? <div className="workflow-feedback workflow-feedback--error" role="alert"><span>{error}</span>{snapshot ? <button className="button button--secondary" type="button" disabled={busy} onClick={() => void update('status')}>Retry status</button> : null}</div> : null}
         </form>
       </div>
@@ -247,7 +279,7 @@ function NumberField({ id, label, value, disabled, onChange, error, max }: { id:
   return <div className="form-field"><label htmlFor={id}>{label}</label><input id={id} type="number" min="1" max={max} step="1" value={value} disabled={disabled} aria-invalid={error ? 'true' : undefined} aria-describedby={error ? `${id}-error` : undefined} onChange={(event) => onChange(event.target.value)} /><FieldError id={`${id}-error`} message={error ?? null} /></div>
 }
 
-function BatchStatusView({ snapshot, busy, onCancel, onRecover, onDownload }: { snapshot: BatchSnapshot; busy: boolean; onCancel: () => void; onRecover: () => void; onDownload: () => void }) {
+function BatchStatusView({ snapshot, busy, onCancel, onRecover, onDownload, onDelete }: { snapshot: BatchSnapshot; busy: boolean; onCancel: () => void; onRecover: () => void; onDownload: () => void; onDelete: () => void }) {
   const { summary } = snapshot
   return (
     <section className="batch-status" aria-label="Batch status">
@@ -265,6 +297,7 @@ function BatchStatusView({ snapshot, busy, onCancel, onRecover, onDownload }: { 
         {snapshot.can_cancel ? <button className="button button--danger" type="button" disabled={busy} onClick={onCancel}>Cancel</button> : null}
         {snapshot.can_recover ? <button className="button button--secondary" type="button" disabled={busy} onClick={onRecover}>{recoveryLabel(snapshot)}</button> : null}
         {snapshot.can_download ? <button className="button button--primary" type="button" disabled={busy} onClick={onDownload}>Download ZIP</button> : null}
+        {snapshot.phase === 'ready' || snapshot.phase === 'error' ? <button className="button button--danger" type="button" disabled={busy} onClick={onDelete}>Delete batch</button> : null}
       </div>
     </section>
   )

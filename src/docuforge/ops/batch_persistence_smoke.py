@@ -67,12 +67,25 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
                     raise BatchPersistenceSmokeError("wrong token was not safely rejected") from None
             else:
                 raise BatchPersistenceSmokeError("wrong token was accepted")
+            second.delete_session(str(request.batch_id), grant.access_token)
+            if workspace.path.exists():
+                raise BatchPersistenceSmokeError("deleted workspace remained")
+            repository = second._repository
+            if repository is None or repository.get(str(request.batch_id)) is not None:
+                raise BatchPersistenceSmokeError("deleted metadata remained")
+            try:
+                second.get(str(request.batch_id), grant.access_token)
+            except ApiError as error:
+                if error.status_code != 404 or error.code != "batch_not_found":
+                    raise BatchPersistenceSmokeError("deleted batch was not hidden") from None
+            else:
+                raise BatchPersistenceSmokeError("deleted batch remained accessible")
             second.shutdown()
     except BatchPersistenceSmokeError:
         raise
     except (OSError, RuntimeError, ValueError) as error:
         raise BatchPersistenceSmokeError("batch-session-restart check failed") from error
-    return ("batch-session-restart",)
+    return ("batch-session-restart", "batch-session-delete")
 
 
 def _wait_ready(
@@ -106,7 +119,8 @@ def main() -> int:
         return 1
     for check in checks:
         print(f"PASS {check}")
-    print(f"Durable batch persistence smoke passed: {len(checks)} check")
+    suffix = "check" if len(checks) == 1 else "checks"
+    print(f"Durable batch persistence smoke passed: {len(checks)} {suffix}")
     return 0
 
 

@@ -39,6 +39,7 @@ def test_configured_cors_allows_known_frontend_origin() -> None:
     assert response.headers["access-control-allow-origin"] == "https://app.example.com"
     assert "X-Request-ID" in response.headers["access-control-allow-headers"]
     assert BATCH_TOKEN_HEADER in response.headers["access-control-allow-headers"]
+    assert "DELETE" in response.headers["access-control-allow-methods"]
     assert response.headers["access-control-allow-headers"] != "*"
 
 
