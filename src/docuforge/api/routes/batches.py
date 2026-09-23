@@ -184,14 +184,14 @@ def create_batch_router(
             )
             grant = service.create_session(request, workspace)
         except InvalidBatchDefinitionError:
-            workspace.cleanup()
+            service.abandon_workspace(workspace)
             raise ApiError(
                 status_code=400,
                 code="invalid_batch_request",
                 message="The batch request is invalid.",
             ) from None
         except BaseException:
-            workspace.cleanup()
+            service.abandon_workspace(workspace)
             raise
         _set_creation_headers(response, settings, grant)
         return _response(grant.snapshot)
@@ -221,7 +221,12 @@ def create_batch_router(
         _set_private_cache_control(response)
         return _response(service.cancel(batch_id, access_token))
 
-    @router.post("/{batch_id}/recover", status_code=202, response_model=BatchStatusResponse)
+    @router.post(
+        "/{batch_id}/recover",
+        status_code=202,
+        response_model=BatchStatusResponse,
+        responses={503: {"model": ApiErrorResponse}},
+    )
     def recover(
         response: Response,
         batch_id: str,
@@ -280,14 +285,14 @@ async def _create_image_session(
         )
         grant = service.create_session(request, workspace)
     except InvalidBatchDefinitionError:
-        workspace.cleanup()
+        service.abandon_workspace(workspace)
         raise ApiError(
             status_code=400,
             code="invalid_batch_request",
             message="The batch request is invalid.",
         ) from None
     except BaseException:
-        workspace.cleanup()
+        service.abandon_workspace(workspace)
         raise
     _set_creation_headers(response, settings, grant)
     return _response(grant.snapshot)
@@ -373,4 +378,8 @@ def _batch_responses() -> dict[int | str, dict[str, object]]:
         400: {"model": ApiErrorResponse, "description": "Invalid batch request."},
         413: {"model": ApiErrorResponse, "description": "Upload limit exceeded."},
         415: {"model": ApiErrorResponse, "description": "Unsupported upload extension."},
+        503: {
+            "model": ApiErrorResponse,
+            "description": "Batch execution capacity is temporarily exhausted.",
+        },
     }

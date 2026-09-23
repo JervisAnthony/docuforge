@@ -31,6 +31,7 @@ def create_app(
     batch_service = BatchExecutionService(
         office_engine_factory=office_engine_factory,
         max_workers=resolved_settings.batch_max_workers,
+        max_inflight_sessions=resolved_settings.batch_max_inflight_sessions,
         terminal_ttl_seconds=resolved_settings.batch_terminal_ttl_seconds,
         storage_directory=resolved_settings.batch_storage_directory,
     )

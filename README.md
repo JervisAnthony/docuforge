@@ -168,7 +168,9 @@ item-level progress, cooperative cancellation, selective retry, and ZIP download
 configuration remains process-local. The production container uses a durable storage directory so
 terminal status, downloads, and recovery survive process restart while its filesystem remains; a
 persistent volume is required to survive container replacement. An operating-system owner lock
-enforces one live DocuForge process per durable storage root. Execution remains single-process.
+enforces one live DocuForge process per durable storage root. Batch admission is reserved before
+workspace preparation and bounds preparing, queued, and active execution. Execution remains
+single-process.
 Batch creation returns a private capability in `X-DocuForge-Batch-Token`; status, cancellation,
 recovery, and download require the same header. The token is never placed in a URL or JSON body.
 

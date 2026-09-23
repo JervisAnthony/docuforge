@@ -275,8 +275,8 @@ class BatchSessionWorkspace:
             raise BatchPersistenceError("Batch workspace could not be prepared.") from error
 
     @classmethod
-    def ephemeral(cls) -> BatchSessionWorkspace:
-        batch_id = BatchId.new()
+    def ephemeral(cls, batch_id: BatchId | None = None) -> BatchSessionWorkspace:
+        batch_id = BatchId.new() if batch_id is None else BatchId(batch_id)
         path = Path(tempfile.mkdtemp(prefix=f"docuforge-batch-{batch_id}-"))
         # mkdtemp creates the root, so create its children before reconstruction validation.
         (path / "inputs").mkdir()
@@ -284,8 +284,10 @@ class BatchSessionWorkspace:
         return cls(path, batch_id, durable=False, create=False)
 
     @classmethod
-    def durable_new(cls, sessions_root: Path) -> BatchSessionWorkspace:
-        batch_id = BatchId.new()
+    def durable_new(
+        cls, sessions_root: Path, batch_id: BatchId | None = None
+    ) -> BatchSessionWorkspace:
+        batch_id = BatchId.new() if batch_id is None else BatchId(batch_id)
         return cls(sessions_root / str(batch_id), batch_id, durable=True, create=True)
 
     @classmethod

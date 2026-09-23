@@ -5,6 +5,7 @@ from docuforge.ops.batch_persistence_smoke import BatchPersistenceSmokeError
 def test_batch_persistence_smoke_runs_real_restart_cycle() -> None:
     assert batch_persistence_smoke.run_batch_persistence_smoke() == (
         "batch-storage-owner-lock",
+        "batch-admission-control",
         "batch-session-restart",
         "batch-session-delete",
     )
@@ -16,6 +17,7 @@ def test_batch_persistence_smoke_cli_success(monkeypatch, capsys) -> None:
         "run_batch_persistence_smoke",
         lambda: (
             "batch-storage-owner-lock",
+            "batch-admission-control",
             "batch-session-restart",
             "batch-session-delete",
         ),
@@ -23,9 +25,10 @@ def test_batch_persistence_smoke_cli_success(monkeypatch, capsys) -> None:
     assert batch_persistence_smoke.main() == 0
     assert capsys.readouterr().out.splitlines() == [
         "PASS batch-storage-owner-lock",
+        "PASS batch-admission-control",
         "PASS batch-session-restart",
         "PASS batch-session-delete",
-        "Durable batch persistence smoke passed: 3 checks",
+        "Durable batch persistence smoke passed: 4 checks",
     ]
 
 

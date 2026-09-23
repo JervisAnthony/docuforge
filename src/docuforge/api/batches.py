@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
@@ -129,15 +130,21 @@ class BatchExecutionService:
         *,
         office_engine_factory: OfficeEngineFactory,
         max_workers: int = 2,
+        max_inflight_sessions: int = 8,
         terminal_ttl_seconds: int = 3600,
         clock: Callable[[], float] = time,
         storage_directory: Path | None = None,
     ) -> None:
         if type(max_workers) is not int or max_workers <= 0:
             raise ValueError("max_workers must be a positive integer")
+        if type(max_inflight_sessions) is not int or max_inflight_sessions <= 0:
+            raise ValueError("max_inflight_sessions must be a positive integer")
+        if max_inflight_sessions < max_workers:
+            raise ValueError("max_inflight_sessions must be at least max_workers")
         if type(terminal_ttl_seconds) is not int or terminal_ttl_seconds <= 0:
             raise ValueError("terminal_ttl_seconds must be a positive integer")
         self._office_engine_factory = office_engine_factory
+        self._max_inflight_sessions = max_inflight_sessions
         self._terminal_ttl_seconds = terminal_ttl_seconds
         self._clock = clock
         self._durable = storage_directory is not None
@@ -145,6 +152,7 @@ class BatchExecutionService:
         self._repository: BatchSessionRepository | None = None
         self._storage_owner_lock: BatchStorageOwnerLock | None = None
         self._sessions: dict[str, _Session] = {}
+        self._admitted_batch_ids: set[str] = set()
         self._lock = RLock()
         self._shutdown = False
         try:
@@ -162,10 +170,33 @@ class BatchExecutionService:
             raise
 
     def create_workspace(self) -> BatchSessionWorkspace:
-        """Create an unregistered workspace for validated upload storage."""
-        if self._sessions_root is None:
-            return BatchSessionWorkspace.ephemeral()
-        return BatchSessionWorkspace.durable_new(self._sessions_root)
+        """Reserve execution admission before returning an upload workspace."""
+        with self._lock:
+            self._expire_locked()
+            if self._shutdown:
+                raise RuntimeError("batch execution service is shut down")
+            self._require_capacity_locked()
+            batch_id = BatchId.new()
+            normalized_id = str(batch_id)
+            self._admitted_batch_ids.add(normalized_id)
+            try:
+                if self._sessions_root is None:
+                    return BatchSessionWorkspace.ephemeral(batch_id)
+                return BatchSessionWorkspace.durable_new(self._sessions_root, batch_id)
+            except BaseException:
+                self._admitted_batch_ids.discard(normalized_id)
+                raise
+
+    def abandon_workspace(self, workspace: BatchSessionWorkspace) -> None:
+        """Release and clean a preparation workspace that was not accepted."""
+        if not isinstance(workspace, BatchSessionWorkspace):
+            raise TypeError("workspace must be a BatchSessionWorkspace")
+        batch_id = str(workspace.batch_id)
+        with self._lock:
+            if batch_id in self._sessions:
+                raise ValueError("a registered batch workspace cannot be abandoned")
+            self._admitted_batch_ids.discard(batch_id)
+        workspace.cleanup()
 
     def create_session(
         self, request: BatchExecutionRequest, workspace: BatchSessionWorkspace
@@ -194,18 +225,34 @@ class BatchExecutionService:
             self._expire_locked()
             if self._shutdown:
                 raise RuntimeError("batch execution service is shut down")
-            self._sessions[str(batch.id)] = session
+            batch_id = str(batch.id)
+            if batch_id not in self._admitted_batch_ids:
+                raise ValueError("batch workspace does not own execution admission")
+            self._sessions[batch_id] = session
             try:
-                self._persist_locked(session, add=True)
-            except BatchPersistenceError:
-                self._sessions.pop(str(batch.id), None)
-                workspace.cleanup()
+                self._executor.submit(self._execute, batch_id, False, False, 1)
+            except Exception:  # noqa: BLE001 - submission is an infrastructure boundary
+                self._sessions.pop(batch_id, None)
+                self._admitted_batch_ids.discard(batch_id)
+                with suppress(BatchPersistenceError):
+                    workspace.cleanup()
                 raise ApiError(
                     status_code=503,
                     code="batch_persistence_failed",
                     message="The batch session could not be persisted.",
                 ) from None
-            self._executor.submit(self._execute, str(batch.id), False, False)
+            try:
+                self._persist_locked(session, add=True)
+            except BatchPersistenceError:
+                self._sessions.pop(batch_id, None)
+                self._admitted_batch_ids.discard(batch_id)
+                with suppress(BatchPersistenceError):
+                    workspace.cleanup()
+                raise ApiError(
+                    status_code=503,
+                    code="batch_persistence_failed",
+                    message="The batch session could not be persisted.",
+                ) from None
             return BatchSessionGrant(self._snapshot_locked(session), access_token)
 
     def get(self, batch_id: str, access_token: object) -> BatchExecutionSnapshot:
@@ -276,44 +323,65 @@ class BatchExecutionService:
                     code="batch_not_recoverable",
                     message="The batch has no recoverable items.",
                 )
-            if packaging_only:
-                next_batch = session.batch
-                next_result = session.result
-            elif selective and session.result is not None:
-                next_batch = session.result.batch.recover_items()
-                next_result = session.result
-            else:
-                next_batch = _initial_batch(session.request)
-                next_result = None
-            next_cancellation = BatchCancellationToken()
-            updated_at = self._clock()
-            candidate = _Session(
-                access_token_hash=session.access_token_hash,
-                request=session.request,
-                workspace=session.workspace,
-                # A selective retry's preserved result belongs to the previous terminal
-                # snapshot. Persist that self-consistent pair until the worker records
-                # the new processing snapshot without the preserved result.
-                batch=session.batch if selective else next_batch,
-                cancellation=next_cancellation,
-                attempt=session.attempt + 1,
-                phase=BatchExecutionPhase.QUEUED,
-                result=next_result,
-                archive_path=None,
-                session_error=None,
-                updated_at=updated_at,
-            )
-            self._persist_or_api_error(candidate)
-            session.attempt = candidate.attempt
-            session.cancellation = next_cancellation
-            session.session_error = None
-            session.archive_path = None
-            session.result = next_result
-            session.batch = next_batch
-            session.phase = BatchExecutionPhase.QUEUED
-            session.updated_at = updated_at
-            self._executor.submit(self._execute, batch_id, selective, packaging_only)
-            return self._snapshot_locked(session)
+            normalized_id = str(session.batch.id)
+            self._reserve_admission_locked(normalized_id)
+            submitted = False
+            try:
+                if packaging_only:
+                    next_batch = session.batch
+                    next_result = session.result
+                elif selective and session.result is not None:
+                    next_batch = session.result.batch.recover_items()
+                    next_result = session.result
+                else:
+                    next_batch = _initial_batch(session.request)
+                    next_result = None
+                next_cancellation = BatchCancellationToken()
+                updated_at = self._clock()
+                candidate = _Session(
+                    access_token_hash=session.access_token_hash,
+                    request=session.request,
+                    workspace=session.workspace,
+                    # A selective retry's preserved result belongs to the previous terminal
+                    # snapshot. Persist that self-consistent pair until the worker records
+                    # the new processing snapshot without the preserved result.
+                    batch=session.batch if selective else next_batch,
+                    cancellation=next_cancellation,
+                    attempt=session.attempt + 1,
+                    phase=BatchExecutionPhase.QUEUED,
+                    result=next_result,
+                    archive_path=None,
+                    session_error=None,
+                    updated_at=updated_at,
+                )
+                try:
+                    self._executor.submit(
+                        self._execute,
+                        normalized_id,
+                        selective,
+                        packaging_only,
+                        candidate.attempt,
+                    )
+                except Exception:  # noqa: BLE001 - submission is an infrastructure boundary
+                    raise ApiError(
+                        status_code=503,
+                        code="batch_persistence_failed",
+                        message="The batch session could not be persisted.",
+                    ) from None
+                self._persist_or_api_error(candidate)
+                session.attempt = candidate.attempt
+                session.cancellation = next_cancellation
+                session.session_error = None
+                session.archive_path = None
+                session.result = next_result
+                session.batch = next_batch
+                session.phase = BatchExecutionPhase.QUEUED
+                session.updated_at = updated_at
+                submitted = True
+                return self._snapshot_locked(session)
+            finally:
+                if not submitted:
+                    self._admitted_batch_ids.discard(normalized_id)
 
     def download_path(self, batch_id: str, access_token: object) -> Path:
         with self._lock:
@@ -394,31 +462,36 @@ class BatchExecutionService:
                 for session in self._sessions.values():
                     session.workspace.cleanup()
             self._sessions.clear()
+            self._admitted_batch_ids.clear()
             if self._storage_owner_lock is not None:
                 self._storage_owner_lock.release()
 
-    def _execute(self, batch_id: str, selective: bool, packaging_only: bool) -> None:
+    def _execute(
+        self,
+        batch_id: str,
+        selective: bool,
+        packaging_only: bool,
+        expected_attempt: int,
+    ) -> None:
         with self._lock:
             session = self._sessions.get(batch_id)
-            if session is None:
+            if session is None or session.attempt != expected_attempt:
                 return
-            attempt = session.attempt
+            attempt = expected_attempt
             previous = session.result if selective else None
-            if packaging_only:
-                result = session.result
-            else:
-                session.phase = (
-                    BatchExecutionPhase.CANCELLING
-                    if session.cancellation.cancellation_requested
-                    else BatchExecutionPhase.PROCESSING
-                )
-                if selective:
-                    session.result = None
-                session.updated_at = self._clock()
-                result = None
-                self._persist_locked(session)
+            result = session.result if packaging_only else None
         try:
             if not packaging_only:
+                with self._lock:
+                    session.phase = (
+                        BatchExecutionPhase.CANCELLING
+                        if session.cancellation.cancellation_requested
+                        else BatchExecutionPhase.PROCESSING
+                    )
+                    if selective:
+                        session.result = None
+                    session.updated_at = self._clock()
+                    self._persist_locked(session)
                 result = self._run_request(session, previous, attempt)
                 with self._lock:
                     if session.attempt != attempt:
@@ -441,6 +514,7 @@ class BatchExecutionService:
                 session.session_error = None
                 session.updated_at = self._clock()
                 self._persist_locked(session)
+                self._admitted_batch_ids.discard(batch_id)
         except Exception:  # noqa: BLE001 - process boundary must expose only safe state
             with self._lock:
                 if result is not None:
@@ -465,6 +539,8 @@ class BatchExecutionService:
                         "batch_persistence_failed",
                         "The batch session could not be persisted.",
                     )
+                finally:
+                    self._admitted_batch_ids.discard(batch_id)
 
     def _run_request(
         self,
@@ -538,6 +614,20 @@ class BatchExecutionService:
         if self._repository is not None:
             self._repository.delete(batch_id)
         self._sessions.pop(batch_id, None)
+
+    def _require_capacity_locked(self) -> None:
+        if len(self._admitted_batch_ids) >= self._max_inflight_sessions:
+            raise ApiError(
+                status_code=503,
+                code="batch_capacity_exceeded",
+                message="The batch service is temporarily at capacity. Try again later.",
+            )
+
+    def _reserve_admission_locked(self, batch_id: str) -> None:
+        if batch_id in self._admitted_batch_ids:
+            raise RuntimeError("batch already owns execution admission")
+        self._require_capacity_locked()
+        self._admitted_batch_ids.add(batch_id)
 
     def _persist_or_api_error(self, session: _Session) -> None:
         try:

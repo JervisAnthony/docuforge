@@ -35,6 +35,7 @@ The production image sets:
 
 ```text
 DOCUFORGE_BATCH_STORAGE_DIRECTORY=/var/lib/docuforge
+DOCUFORGE_BATCH_MAX_INFLIGHT_SESSIONS=8
 ```
 
 This enables SQLite session metadata and deterministic per-BatchId workspaces. The non-root API
@@ -52,6 +53,11 @@ another worker or replica using that same root fails durable-storage initializat
 The lock file is stable metadata and is expected to remain after shutdown or a crash. Do not delete
 it to resolve startup contention. Stop the process that owns the storage root, then start the
 replacement. Independent processes may use different durable roots.
+
+`DOCUFORGE_BATCH_MAX_INFLIGHT_SESSIONS` bounds preparing, queued, and active batch execution per
+API process. It defaults to 8 and must be at least `batch_max_workers` (2 by default). Choose a
+limit based on converter cost and available memory and storage; arbitrarily large values defeat
+backpressure. This limit does not cap retained terminal storage.
 
 Opening a Commit 56 schema-v1 database migrates it transactionally to schema v2. Pre-token rows
 and their BatchId workspaces are removed because no secure access capability was issued for them.
