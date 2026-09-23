@@ -11,6 +11,7 @@ from zipfile import ZipFile
 
 from PIL import Image
 
+from docuforge.api.batch_storage_lock import BatchStorageOwnershipError
 from docuforge.api.batches import BatchExecutionPhase, BatchExecutionService
 from docuforge.api.errors import ApiError
 from docuforge.batch import BatchImageConvertRequest, BatchImageInput
@@ -35,6 +36,16 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
                 max_workers=1,
                 storage_directory=storage,
             )
+            try:
+                BatchExecutionService(
+                    office_engine_factory=LibreOfficeEngine,
+                    max_workers=1,
+                    storage_directory=storage,
+                )
+            except BatchStorageOwnershipError:
+                pass
+            else:
+                raise BatchPersistenceSmokeError("competing storage owner was accepted")
             workspace = first.create_workspace()
             item_directory = workspace.inputs_directory / "item-0001"
             item_directory.mkdir()
@@ -85,7 +96,11 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
         raise
     except (OSError, RuntimeError, ValueError) as error:
         raise BatchPersistenceSmokeError("batch-session-restart check failed") from error
-    return ("batch-session-restart", "batch-session-delete")
+    return (
+        "batch-storage-owner-lock",
+        "batch-session-restart",
+        "batch-session-delete",
+    )
 
 
 def _wait_ready(

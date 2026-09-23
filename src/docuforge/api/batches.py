@@ -26,6 +26,7 @@ from docuforge.api.batch_persistence import (
     prepare_durable_storage,
     reconcile_orphan_workspaces,
 )
+from docuforge.api.batch_storage_lock import BatchStorageOwnerLock
 from docuforge.api.errors import ApiError
 from docuforge.api.office import OfficeEngineFactory
 from docuforge.batch import (
@@ -142,18 +143,23 @@ class BatchExecutionService:
         self._durable = storage_directory is not None
         self._sessions_root: Path | None = None
         self._repository: BatchSessionRepository | None = None
-        if storage_directory is not None:
-            self._sessions_root, self._repository = prepare_durable_storage(
-                Path(storage_directory)
-            )
-        self._executor = ThreadPoolExecutor(
-            max_workers=max_workers, thread_name_prefix="docuforge-batch"
-        )
+        self._storage_owner_lock: BatchStorageOwnerLock | None = None
         self._sessions: dict[str, _Session] = {}
         self._lock = RLock()
         self._shutdown = False
-        if self._durable:
-            self._restore_sessions()
+        try:
+            if storage_directory is not None:
+                storage_root = Path(storage_directory)
+                self._storage_owner_lock = BatchStorageOwnerLock.acquire(storage_root)
+                self._sessions_root, self._repository = prepare_durable_storage(storage_root)
+                self._restore_sessions()
+            self._executor = ThreadPoolExecutor(
+                max_workers=max_workers, thread_name_prefix="docuforge-batch"
+            )
+        except BaseException:
+            if self._storage_owner_lock is not None:
+                self._storage_owner_lock.release()
+            raise
 
     def create_workspace(self) -> BatchSessionWorkspace:
         """Create an unregistered workspace for validated upload storage."""
@@ -388,6 +394,8 @@ class BatchExecutionService:
                 for session in self._sessions.values():
                     session.workspace.cleanup()
             self._sessions.clear()
+            if self._storage_owner_lock is not None:
+                self._storage_owner_lock.release()
 
     def _execute(self, batch_id: str, selective: bool, packaging_only: bool) -> None:
         with self._lock:
