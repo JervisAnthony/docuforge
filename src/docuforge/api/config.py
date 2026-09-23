@@ -37,6 +37,19 @@ def _environment_path(name: str) -> Path | None:
         raise ValueError(f"{name} must be a valid non-blank path") from error
 
 
+def _environment_positive_integer(name: str, *, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip()
+    if not normalized.isascii() or not normalized.isdecimal():
+        raise ValueError(f"{name} must be a positive integer")
+    value = int(normalized)
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class ApiSettings:
     """Immutable settings used to build one API application instance."""
@@ -54,6 +67,7 @@ class ApiSettings:
     max_pdf_render_pages: int = 100
     max_pdf_render_pixels_per_page: int = 40_000_000
     batch_max_workers: int = 2
+    batch_max_inflight_sessions: int = 8
     batch_terminal_ttl_seconds: int = 3600
     batch_storage_directory: Path | None = None
 
@@ -66,6 +80,9 @@ class ApiSettings:
             cors_allowed_origins=_environment_origins("DOCUFORGE_CORS_ALLOWED_ORIGINS"),
             batch_storage_directory=_environment_path(
                 "DOCUFORGE_BATCH_STORAGE_DIRECTORY"
+            ),
+            batch_max_inflight_sessions=_environment_positive_integer(
+                "DOCUFORGE_BATCH_MAX_INFLIGHT_SESSIONS", default=8
             ),
         )
 
@@ -98,6 +115,7 @@ class ApiSettings:
             "max_pdf_render_pages",
             "max_pdf_render_pixels_per_page",
             "batch_max_workers",
+            "batch_max_inflight_sessions",
             "batch_terminal_ttl_seconds",
         )
         for field_name in upload_limit_fields:
@@ -107,6 +125,8 @@ class ApiSettings:
 
         if self.max_upload_file_bytes > self.max_upload_request_bytes:
             raise ValueError("max_upload_file_bytes must not exceed max_upload_request_bytes")
+        if self.batch_max_inflight_sessions < self.batch_max_workers:
+            raise ValueError("batch_max_inflight_sessions must be at least batch_max_workers")
         if self.batch_storage_directory is not None and not isinstance(
             self.batch_storage_directory, Path
         ):

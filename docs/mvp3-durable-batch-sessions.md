@@ -45,6 +45,11 @@ internal DELETING tombstone before removing the workspace and metadata; startup 
 deletions before restoring sessions. TTL remains the automatic fallback. This is application-level
 removal and does not claim physical media overwriting or storage-provider backup deletion.
 
+Preparing, queued, processing, cancelling, and packaging work is bounded by process-local
+[batch admission control](mvp3-batch-admission.md). Retained READY, ERROR, and DELETING sessions do
+not consume execution admission. Aggregate retained-storage capacity remains a separate operational
+concern because terminal sessions may remain until explicit deletion or TTL expiry.
+
 ## Production storage
 
 The production image configures `DOCUFORGE_BATCH_STORAGE_DIRECTORY=/var/lib/docuforge` and grants

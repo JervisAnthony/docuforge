@@ -22,6 +22,8 @@ def test_settings_defaults() -> None:
     assert settings.upload_chunk_bytes == 1024 * 1024
     assert settings.max_pdf_render_pages == 100
     assert settings.max_pdf_render_pixels_per_page == 40_000_000
+    assert settings.batch_max_workers == 2
+    assert settings.batch_max_inflight_sessions == 8
     assert settings.batch_storage_directory is None
 
 
@@ -96,6 +98,9 @@ def test_settings_are_immutable() -> None:
         "upload_chunk_bytes",
         "max_pdf_render_pages",
         "max_pdf_render_pixels_per_page",
+        "batch_max_workers",
+        "batch_max_inflight_sessions",
+        "batch_terminal_ttl_seconds",
     ],
 )
 @pytest.mark.parametrize("value", [0, -1, True, False, 1.5, "1"])
@@ -107,6 +112,25 @@ def test_settings_reject_invalid_upload_limits(field_name: str, value: object) -
 def test_settings_reject_file_limit_above_request_limit() -> None:
     with pytest.raises(ValueError, match="must not exceed"):
         ApiSettings(max_upload_file_bytes=11, max_upload_request_bytes=10)
+
+
+def test_settings_rejects_inflight_limit_below_worker_count() -> None:
+    with pytest.raises(ValueError, match="must be at least batch_max_workers"):
+        ApiSettings(batch_max_workers=4, batch_max_inflight_sessions=2)
+
+
+def test_settings_reads_batch_max_inflight_environment(monkeypatch) -> None:
+    monkeypatch.setenv("DOCUFORGE_BATCH_MAX_INFLIGHT_SESSIONS", "12")
+    assert ApiSettings.from_environment().batch_max_inflight_sessions == 12
+
+
+@pytest.mark.parametrize("value", ["", "   ", "0", "-1", "1.5", "true", "eight"])
+def test_settings_rejects_invalid_batch_max_inflight_environment(
+    monkeypatch, value: str
+) -> None:
+    monkeypatch.setenv("DOCUFORGE_BATCH_MAX_INFLIGHT_SESSIONS", value)
+    with pytest.raises(ValueError, match="must be a positive integer"):
+        ApiSettings.from_environment()
 
 
 def test_settings_reads_optional_batch_storage_directory(monkeypatch) -> None:

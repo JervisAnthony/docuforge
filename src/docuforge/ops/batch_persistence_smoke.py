@@ -34,6 +34,7 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
             first = BatchExecutionService(
                 office_engine_factory=LibreOfficeEngine,
                 max_workers=1,
+                max_inflight_sessions=1,
                 storage_directory=storage,
             )
             try:
@@ -47,6 +48,13 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
             else:
                 raise BatchPersistenceSmokeError("competing storage owner was accepted")
             workspace = first.create_workspace()
+            try:
+                first.create_workspace()
+            except ApiError as error:
+                if error.status_code != 503 or error.code != "batch_capacity_exceeded":
+                    raise BatchPersistenceSmokeError("admission failure was not safe") from None
+            else:
+                raise BatchPersistenceSmokeError("excess batch admission was accepted")
             item_directory = workspace.inputs_directory / "item-0001"
             item_directory.mkdir()
             source = item_directory / "smoke.png"
@@ -98,6 +106,7 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
         raise BatchPersistenceSmokeError("batch-session-restart check failed") from error
     return (
         "batch-storage-owner-lock",
+        "batch-admission-control",
         "batch-session-restart",
         "batch-session-delete",
     )
