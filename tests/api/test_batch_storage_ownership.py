@@ -6,6 +6,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -27,6 +28,58 @@ def service(storage: Path | None = None) -> BatchExecutionService:
         office_engine_factory=RecordingEngine,
         max_workers=1,
         storage_directory=storage,
+    )
+
+
+def acquire_after_forced_exit(
+    storage_root: Path, *, timeout_seconds: float = 10.0
+) -> tuple[BatchExecutionService, int, float]:
+    """Allow only transient owner contention after a confirmed forced exit."""
+    deadline = time.monotonic() + timeout_seconds
+    started = time.monotonic()
+    retries = 0
+    while True:
+        try:
+            return service(storage_root), retries, time.monotonic() - started
+        except BatchStorageOwnershipError as error:
+            if str(error) != "Durable batch storage is already in use by another process.":
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            retries += 1
+            time.sleep(min(0.05, remaining))
+
+
+def start_owner_child(storage_root: Path, *, graceful: bool) -> subprocess.Popen[str]:
+    child_code = """
+import sys
+from pathlib import Path
+from docuforge.api.batches import BatchExecutionService
+from tests.batch.test_document import RecordingEngine
+service = BatchExecutionService(
+    office_engine_factory=RecordingEngine,
+    max_workers=1,
+    storage_directory=Path(sys.argv[1]),
+)
+print("READY", flush=True)
+sys.stdin.readline()
+if sys.argv[2] == "graceful":
+    service.shutdown()
+    print("RELEASED", flush=True)
+"""
+    environment = os.environ.copy()
+    source_root = str(Path(__file__).resolve().parents[2])
+    environment["PYTHONPATH"] = os.pathsep.join(
+        part for part in (source_root, source_root + os.sep + "src", environment.get("PYTHONPATH", "")) if part
+    )
+    return subprocess.Popen(
+        [sys.executable, "-c", child_code, str(storage_root), "graceful" if graceful else "forced"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=environment,
     )
 
 
@@ -184,32 +237,7 @@ def test_service_shutdown_releases_last_and_is_idempotent(tmp_path: Path) -> Non
 
 
 def test_real_subprocess_contention_and_forced_exit_release(tmp_path: Path) -> None:
-    child_code = """
-import sys
-from pathlib import Path
-from docuforge.api.batches import BatchExecutionService
-from docuforge.converters.office import LibreOfficeEngine
-service = BatchExecutionService(
-    office_engine_factory=LibreOfficeEngine,
-    max_workers=1,
-    storage_directory=Path(sys.argv[1]),
-)
-print("READY", flush=True)
-sys.stdin.readline()
-"""
-    environment = os.environ.copy()
-    source_root = str(Path(__file__).resolve().parents[2] / "src")
-    environment["PYTHONPATH"] = os.pathsep.join(
-        part for part in (source_root, environment.get("PYTHONPATH", "")) if part
-    )
-    child = subprocess.Popen(
-        [sys.executable, "-c", child_code, str(tmp_path)],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=environment,
-    )
+    child = start_owner_child(tmp_path, graceful=False)
     try:
         assert child.stdout is not None
         assert child.stdout.readline().strip() == "READY"
@@ -219,8 +247,34 @@ sys.stdin.readline()
         identity = lock_path.stat().st_dev, lock_path.stat().st_ino
         child.kill()
         assert child.wait(timeout=10) != 0
+        owner, retries, elapsed = acquire_after_forced_exit(tmp_path)
+        owner.shutdown()
+        assert lock_path.is_file()
+        assert (lock_path.stat().st_dev, lock_path.stat().st_ino) == identity
+        print(f"forced-exit reacquisition: retries={retries}, elapsed={elapsed:.3f}s")
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=10)
+
+
+def test_real_subprocess_graceful_shutdown_releases_immediately(tmp_path: Path) -> None:
+    child = start_owner_child(tmp_path, graceful=True)
+    try:
+        assert child.stdout is not None
+        assert child.stdin is not None
+        assert child.stdout.readline().strip() == "READY"
+        with pytest.raises(BatchStorageOwnershipError, match="already in use"):
+            service(tmp_path)
+        lock_path = tmp_path / LOCK_FILE_NAME
+        identity = lock_path.stat().st_dev, lock_path.stat().st_ino
+        child.stdin.write("stop\n")
+        child.stdin.flush()
+        assert child.stdout.readline().strip() == "RELEASED"
+        assert child.wait(timeout=10) == 0
         owner = service(tmp_path)
         owner.shutdown()
+        assert lock_path.is_file()
         assert (lock_path.stat().st_dev, lock_path.stat().st_ino) == identity
     finally:
         if child.poll() is None:
