@@ -95,6 +95,25 @@ jobs:
       - name: Run tests
         run: python -m pytest
 
+  windows-storage-ownership:
+    name: Windows durable storage ownership
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install test and web dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,web]"
+      - name: Verify durable storage ownership
+        run: python -m pytest tests/api/test_batch_storage_ownership.py
+
   ruff:
     name: Ruff
     runs-on: ubuntu-latest

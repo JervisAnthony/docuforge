@@ -54,6 +54,11 @@ The lock file is stable metadata and is expected to remain after shutdown or a c
 it to resolve startup contention. Stop the process that owns the storage root, then start the
 replacement. Independent processes may use different durable roots.
 
+For local Windows deployments, if startup immediately after an abnormally terminated process says
+durable storage is still in use, verify the old process is gone, wait briefly, and retry application
+startup. This delayed release visibility can follow forced termination; orderly shutdown explicitly
+releases ownership. Do not delete `batch-storage.lock`.
+
 `DOCUFORGE_BATCH_MAX_INFLIGHT_SESSIONS` bounds preparing, queued, and active batch execution per
 API process. It defaults to 8 and must be at least `batch_max_workers` (2 by default). Choose a
 limit based on converter cost and available memory and storage; arbitrarily large values defeat

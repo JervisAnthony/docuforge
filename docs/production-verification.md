@@ -25,6 +25,9 @@ SQLite/workspace access, and confirms a wrong capability is rejected. Its output
 and never prints capability values. Public Production Smoke does not restart the deployed Railway
 service.
 
+CI also runs the focused **Windows durable storage ownership** job on Windows with Python 3.13,
+alongside the Linux production-image verification.
+
 Normal pushes and pull requests do not send traffic to the public deployment.
 
 After the automated checks pass, run one PDF, image, Office, and OCR tool in the browser, confirm
