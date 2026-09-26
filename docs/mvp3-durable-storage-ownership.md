@@ -21,8 +21,12 @@ data.
 ## Crash behavior
 
 The lock file remains in place and is reused after orderly shutdown or a crash; DocuForge never
-deletes it as stale metadata. The operating system releases ownership when the descriptor closes or
-the owner process exits, allowing the next process to acquire the same stable file.
+deletes it as stale metadata. Orderly shutdown explicitly unlocks before closing the descriptor.
+After abnormal process termination, the operating system releases the abandoned lock. On Windows,
+that release may not become observable immediately. Production acquisition remains fail-fast: a
+replacement started during this short cleanup interval may receive the normal "already in use"
+error. Verify the old process has exited, wait briefly, and retry startup. Do not delete
+`batch-storage.lock`.
 
 ## Startup behavior
 
@@ -48,9 +52,9 @@ concurrently when each has a different durable root, and ephemeral services acqu
 
 ## Validation
 
-The ownership tests cover same-process contention, real child-process contention, forced child
-termination and reacquisition, stable-file reuse, non-inheritable descriptors, unsafe filesystem
-nodes, constructor failures, shutdown ordering, and independent roots. The production image smoke
+The ownership tests cover same-process contention, real child-process contention, graceful immediate
+release, bounded reacquisition after forced child termination, stable-file reuse, non-inheritable
+descriptors, unsafe filesystem nodes, constructor failures, shutdown ordering, and independent roots. The production image smoke
 reports `PASS batch-storage-owner-lock` before its restart and deletion markers. Current exact suite
 totals are recorded in the Commit 59 pull request after validation.
 
