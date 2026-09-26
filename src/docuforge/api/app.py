@@ -33,6 +33,7 @@ def create_app(
         max_workers=resolved_settings.batch_max_workers,
         max_inflight_sessions=resolved_settings.batch_max_inflight_sessions,
         terminal_ttl_seconds=resolved_settings.batch_terminal_ttl_seconds,
+        cleanup_interval_seconds=resolved_settings.batch_cleanup_interval_seconds,
         storage_directory=resolved_settings.batch_storage_directory,
     )
 
@@ -72,6 +73,3 @@ def create_app(
     )
     application.state.batch_service = batch_service
     return application
-
-
-app = create_app(ApiSettings.from_environment())

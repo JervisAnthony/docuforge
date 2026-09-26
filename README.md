@@ -49,6 +49,7 @@ workflows use TTL-bound session workspaces, and production may use restart-durab
 Per-session capabilities protect retained batch access. Production request logs record operational
 metadata rather than uploaded contents and redact BatchIds from batch request paths.
 Capability holders can explicitly delete terminal retained batch sessions before TTL expiry.
+Terminal batch retention is proactively cleaned after TTL even during idle server periods.
 
 ## Local development
 
@@ -76,7 +77,7 @@ Frontend development requires Node.js 24 and npm.
 Start the API:
 
 ```bash
-python -m uvicorn docuforge.api.app:app --reload
+python -m uvicorn docuforge.api.asgi:app --reload
 ```
 
 Then start the Vite application in another terminal:
@@ -180,7 +181,7 @@ Install the web dependencies and run:
 
 ```bash
 python -m pip install -e ".[web]"
-python -m uvicorn docuforge.api.app:app --reload
+python -m uvicorn docuforge.api.asgi:app --reload
 ```
 
 System endpoints:

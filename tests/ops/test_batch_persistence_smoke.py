@@ -8,6 +8,7 @@ def test_batch_persistence_smoke_runs_real_restart_cycle() -> None:
         "batch-admission-control",
         "batch-session-restart",
         "batch-session-delete",
+        "batch-ttl-sweeper",
     )
 
 
@@ -20,6 +21,7 @@ def test_batch_persistence_smoke_cli_success(monkeypatch, capsys) -> None:
             "batch-admission-control",
             "batch-session-restart",
             "batch-session-delete",
+            "batch-ttl-sweeper",
         ),
     )
     assert batch_persistence_smoke.main() == 0
@@ -28,7 +30,8 @@ def test_batch_persistence_smoke_cli_success(monkeypatch, capsys) -> None:
         "PASS batch-admission-control",
         "PASS batch-session-restart",
         "PASS batch-session-delete",
-        "Durable batch persistence smoke passed: 4 checks",
+        "PASS batch-ttl-sweeper",
+        "Durable batch persistence smoke passed: 5 checks",
     ]
 
 

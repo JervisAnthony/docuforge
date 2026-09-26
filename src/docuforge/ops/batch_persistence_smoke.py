@@ -83,7 +83,9 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
                 second.get(str(request.batch_id), "wrong-token")
             except ApiError as error:
                 if error.status_code != 404 or error.code != "batch_not_found":
-                    raise BatchPersistenceSmokeError("wrong token was not safely rejected") from None
+                    raise BatchPersistenceSmokeError(
+                        "wrong token was not safely rejected"
+                    ) from None
             else:
                 raise BatchPersistenceSmokeError("wrong token was accepted")
             second.delete_session(str(request.batch_id), grant.access_token)
@@ -100,6 +102,7 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
             else:
                 raise BatchPersistenceSmokeError("deleted batch remained accessible")
             second.shutdown()
+            _verify_idle_expiry(storage)
     except BatchPersistenceSmokeError:
         raise
     except (OSError, RuntimeError, ValueError) as error:
@@ -109,12 +112,49 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
         "batch-admission-control",
         "batch-session-restart",
         "batch-session-delete",
+        "batch-ttl-sweeper",
     )
 
 
-def _wait_ready(
-    service: BatchExecutionService, batch_id: str, access_token: str
-) -> None:
+def _verify_idle_expiry(storage: Path) -> None:
+    """Observe autonomous removal without invoking access-triggered expiry."""
+    service = BatchExecutionService(
+        office_engine_factory=LibreOfficeEngine,
+        max_workers=1,
+        storage_directory=storage,
+        terminal_ttl_seconds=2,
+        cleanup_interval_seconds=1,
+    )
+    try:
+        workspace = service.create_workspace()
+        item_directory = workspace.inputs_directory / "item-0001"
+        item_directory.mkdir()
+        source = item_directory / "smoke.png"
+        Image.new("RGB", (8, 8), "blue").save(source)
+        request = BatchImageConvertRequest(
+            (BatchImageInput(source, descriptor="smoke.png"),),
+            workspace.output_directory,
+            "jpg",
+            workspace.batch_id,
+        )
+        grant = service.create_session(request, workspace)
+        batch_id = str(request.batch_id)
+        _wait_ready(service, batch_id, grant.access_token)
+        deadline = monotonic() + 10
+        while monotonic() < deadline:
+            with service._lock:
+                removed = batch_id not in service._sessions
+            if removed:
+                if workspace.path.exists() or service._repository.get(batch_id) is not None:
+                    raise BatchPersistenceSmokeError("expired batch storage remained")
+                return
+            sleep(0.02)
+        raise BatchPersistenceSmokeError("idle batch retention did not complete")
+    finally:
+        service.shutdown()
+
+
+def _wait_ready(service: BatchExecutionService, batch_id: str, access_token: str) -> None:
     deadline = monotonic() + 15
     while monotonic() < deadline:
         snapshot = service.get(batch_id, access_token)

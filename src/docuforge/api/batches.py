@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock, Thread
 from time import time
 
 from docuforge.api.batch_access import (
@@ -63,6 +64,7 @@ BatchExecutionResult = BatchImageResult | BatchDocumentResult
 _EXECUTION_FAILURE = BatchItemFailure(
     "batch_execution_failed", "The batch could not be completed."
 )
+_LOGGER = logging.getLogger(__name__)
 
 
 class BatchExecutionPhase(str, Enum):
@@ -132,6 +134,7 @@ class BatchExecutionService:
         max_workers: int = 2,
         max_inflight_sessions: int = 8,
         terminal_ttl_seconds: int = 3600,
+        cleanup_interval_seconds: int = 60,
         clock: Callable[[], float] = time,
         storage_directory: Path | None = None,
     ) -> None:
@@ -143,9 +146,14 @@ class BatchExecutionService:
             raise ValueError("max_inflight_sessions must be at least max_workers")
         if type(terminal_ttl_seconds) is not int or terminal_ttl_seconds <= 0:
             raise ValueError("terminal_ttl_seconds must be a positive integer")
+        if type(cleanup_interval_seconds) is not int or cleanup_interval_seconds <= 0:
+            raise ValueError("cleanup_interval_seconds must be a positive integer")
         self._office_engine_factory = office_engine_factory
         self._max_inflight_sessions = max_inflight_sessions
         self._terminal_ttl_seconds = terminal_ttl_seconds
+        self._cleanup_interval_seconds = cleanup_interval_seconds
+        self._cleanup_stop = Event()
+        self._cleanup_thread: Thread | None = None
         self._clock = clock
         self._durable = storage_directory is not None
         self._sessions_root: Path | None = None
@@ -155,6 +163,7 @@ class BatchExecutionService:
         self._admitted_batch_ids: set[str] = set()
         self._lock = RLock()
         self._shutdown = False
+        executor = None
         try:
             if storage_directory is not None:
                 storage_root = Path(storage_directory)
@@ -164,7 +173,17 @@ class BatchExecutionService:
             self._executor = ThreadPoolExecutor(
                 max_workers=max_workers, thread_name_prefix="docuforge-batch"
             )
+            executor = self._executor
+            self._cleanup_thread = Thread(
+                target=self._cleanup_loop, name="docuforge-batch-cleanup", daemon=True
+            )
+            self._cleanup_thread.start()
         except BaseException:
+            self._cleanup_stop.set()
+            if self._cleanup_thread is not None and self._cleanup_thread.ident is not None:
+                self._cleanup_thread.join()
+            if executor is not None:
+                executor.shutdown(wait=True)
             if self._storage_owner_lock is not None:
                 self._storage_owner_lock.release()
             raise
@@ -456,6 +475,10 @@ class BatchExecutionService:
                     BatchExecutionPhase.PACKAGING,
                 }:
                     session.cancellation.request_cancellation()
+            cleanup_thread = self._cleanup_thread
+            self._cleanup_stop.set()
+        if cleanup_thread is not None:
+            cleanup_thread.join()
         self._executor.shutdown(wait=True, cancel_futures=False)
         with self._lock:
             if not self._durable:
@@ -593,6 +616,37 @@ class BatchExecutionService:
             )
         return session
 
+    def _cleanup_loop(self) -> None:
+        while not self._cleanup_stop.wait(self._cleanup_interval_seconds):
+            try:
+                with self._lock:
+                    if self._shutdown:
+                        return
+                    self._sweep_locked()
+            except BatchPersistenceError:
+                _LOGGER.warning("Batch retention cleanup failed; it will be retried.")
+
+    def _sweep_locked(self) -> None:
+        failure = None
+        for action in (self._retry_deleting_locked, self._expire_locked):
+            try:
+                action()
+            except BatchPersistenceError as error:
+                failure = failure or error
+        if failure is not None:
+            raise failure
+
+    def _retry_deleting_locked(self) -> None:
+        failure = None
+        for batch_id, session in tuple(self._sessions.items()):
+            if session.phase is BatchExecutionPhase.DELETING:
+                try:
+                    self._finalize_deletion_locked(batch_id, session)
+                except BatchPersistenceError as error:
+                    failure = failure or error
+        if failure is not None:
+            raise failure
+
     def _expire_locked(self) -> None:
         now = self._clock()
         expired = [
@@ -601,13 +655,19 @@ class BatchExecutionService:
             if session.phase in {BatchExecutionPhase.READY, BatchExecutionPhase.ERROR}
             and now - session.updated_at >= self._terminal_ttl_seconds
         ]
+        failure = None
         for batch_id in expired:
             session = self._sessions[batch_id]
             candidate = replace(session, phase=BatchExecutionPhase.DELETING, updated_at=now)
-            self._persist_locked(candidate)
-            session.phase = candidate.phase
-            session.updated_at = now
-            self._finalize_deletion_locked(batch_id, session)
+            try:
+                self._persist_locked(candidate)
+                session.phase = candidate.phase
+                session.updated_at = now
+                self._finalize_deletion_locked(batch_id, session)
+            except BatchPersistenceError as error:
+                failure = failure or error
+        if failure is not None:
+            raise failure
 
     def _finalize_deletion_locked(self, batch_id: str, session: _Session) -> None:
         session.workspace.cleanup()

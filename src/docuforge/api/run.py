@@ -13,7 +13,7 @@ def main() -> None:
     port = int(os.getenv("PORT", "8000"))
     configure_request_logging()
     uvicorn.run(
-        "docuforge.api.app:app",
+        "docuforge.api.asgi:app",
         host=host,
         port=port,
         access_log=False,
