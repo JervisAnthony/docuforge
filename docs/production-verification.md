@@ -21,7 +21,7 @@ recognition.
 The CI **Production runtime image** job also runs synthetic durable storage ownership, batch restart,
 deletion and idle TTL checks inside the production container. It reports `PASS batch-storage-owner-lock`,
 `PASS batch-admission-control`, `PASS batch-session-restart`, `PASS batch-session-delete`, and
-`PASS batch-ttl-sweeper`, verifies non-root
+`PASS batch-ttl-sweeper`, and `PASS batch-storage-pressure`, verifies non-root
 SQLite/workspace access, and confirms a wrong capability is rejected. Its output remains generic
 and never prints capability values. Public Production Smoke does not restart the deployed Railway
 service.

@@ -103,6 +103,7 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
                 raise BatchPersistenceSmokeError("deleted batch remained accessible")
             second.shutdown()
             _verify_idle_expiry(storage)
+            _verify_storage_pressure(storage)
     except BatchPersistenceSmokeError:
         raise
     except (OSError, RuntimeError, ValueError) as error:
@@ -113,7 +114,37 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
         "batch-session-restart",
         "batch-session-delete",
         "batch-ttl-sweeper",
+        "batch-storage-pressure",
     )
+
+
+def _verify_storage_pressure(storage: Path) -> None:
+    free = [0]
+    service = BatchExecutionService(
+        office_engine_factory=LibreOfficeEngine,
+        storage_directory=storage,
+        min_free_storage_bytes=10,
+        max_upload_request_bytes=10,
+        free_storage_bytes=lambda _root: free[0],
+    )
+    try:
+        try:
+            service.create_workspace()
+        except ApiError as error:
+            if (
+                error.status_code != 507 or error.code != "batch_storage_pressure"
+                or error.message != "Batch storage is temporarily full. Try again later."
+            ):
+                raise BatchPersistenceSmokeError("storage pressure was not safely rejected") from None
+        else:
+            raise BatchPersistenceSmokeError("insufficient storage was accepted")
+        if service._admitted_batch_ids or any(service._sessions_root.iterdir()):
+            raise BatchPersistenceSmokeError("rejected storage admission retained a workspace")
+        free[0] = 20
+        workspace = service.create_workspace()
+        service.abandon_workspace(workspace)
+    finally:
+        service.shutdown()
 
 
 def _verify_idle_expiry(storage: Path) -> None:

@@ -70,6 +70,7 @@ class ApiSettings:
     batch_max_inflight_sessions: int = 8
     batch_terminal_ttl_seconds: int = 3600
     batch_cleanup_interval_seconds: int = 60
+    batch_min_free_storage_bytes: int = 200 * 1024 * 1024
     batch_storage_directory: Path | None = None
 
     @classmethod
@@ -87,6 +88,9 @@ class ApiSettings:
             ),
             batch_cleanup_interval_seconds=_environment_positive_integer(
                 "DOCUFORGE_BATCH_CLEANUP_INTERVAL_SECONDS", default=60
+            ),
+            batch_min_free_storage_bytes=_environment_positive_integer(
+                "DOCUFORGE_BATCH_MIN_FREE_STORAGE_BYTES", default=200 * 1024 * 1024
             ),
         )
 
@@ -122,6 +126,7 @@ class ApiSettings:
             "batch_max_inflight_sessions",
             "batch_terminal_ttl_seconds",
             "batch_cleanup_interval_seconds",
+            "batch_min_free_storage_bytes",
         )
         for field_name in upload_limit_fields:
             value = getattr(self, field_name)

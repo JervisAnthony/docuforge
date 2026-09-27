@@ -139,3 +139,15 @@ wake frequency and increases post-TTL removal latency. This does not change the 
 validation constraint. A healthy process normally detects expiry within roughly one interval
 of TTL eligibility. Startup and access-triggered cleanup remain, and sweeps retry committed
 DELETING cleanup. This is retention enforcement, not a retained-storage byte quota or secure erasure.
+
+### Durable filesystem headroom
+
+`DOCUFORGE_BATCH_MIN_FREE_STORAGE_BYTES=209715200` sets a strictly positive byte reserve
+(default 200 MiB), only for durable batches. Initial admission additionally budgets one maximum
+batch upload request, so defaults require approximately 400 MiB before accepting a workspace.
+Tune for volume size and converter workload: larger reserves reject work earlier, smaller reserves
+increase exhaustion risk. Keeping the reserve at least around the maximum upload size is recommended.
+Streaming chunks reserve pending write bytes; recovery, execution and ZIP packaging recheck headroom.
+Only already-eligible TTL/deletion tombstones are reclaimed. Unexpired sessions are never evicted.
+See [durable storage pressure](mvp3-storage-pressure.md) for safe 507/503 errors and the boundary:
+this is not a hard filesystem quota or a guarantee against unpredictable converter staging expansion.

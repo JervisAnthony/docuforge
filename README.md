@@ -50,6 +50,7 @@ Per-session capabilities protect retained batch access. Production request logs 
 metadata rather than uploaded contents and redact BatchIds from batch request paths.
 Capability holders can explicitly delete terminal retained batch sessions before TTL expiry.
 Terminal batch retention is proactively cleaned after TTL even during idle server periods.
+Durable batch creation applies both execution admission and filesystem headroom backpressure.
 
 ## Local development
 

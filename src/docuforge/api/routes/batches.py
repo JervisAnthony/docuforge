@@ -172,7 +172,8 @@ def create_batch_router(
         workspace = service.create_workspace()
         try:
             uploads = await store_batch_uploads(
-                file, input_directory=workspace.inputs_directory, policy=office_policy
+                file, input_directory=workspace.inputs_directory, policy=office_policy,
+                reserve_storage_write=service.reserve_storage_write,
             )
             request = BatchDocumentConvertRequest(
                 tuple(
@@ -225,7 +226,13 @@ def create_batch_router(
         "/{batch_id}/recover",
         status_code=202,
         response_model=BatchStatusResponse,
-        responses={503: {"model": ApiErrorResponse}},
+        responses={
+            503: {"model": ApiErrorResponse},
+            507: {
+                "model": ApiErrorResponse,
+                "description": "Durable batch storage does not currently have enough safe headroom.",
+            },
+        },
     )
     def recover(
         response: Response,
@@ -274,7 +281,8 @@ async def _create_image_session(
     workspace = service.create_workspace()
     try:
         stored = await store_batch_uploads(
-            uploads, input_directory=workspace.inputs_directory, policy=policy
+            uploads, input_directory=workspace.inputs_directory, policy=policy,
+            reserve_storage_write=service.reserve_storage_write,
         )
         items = tuple(
             BatchImageInput(upload.stored_path, descriptor=upload.original_name)
@@ -381,5 +389,9 @@ def _batch_responses() -> dict[int | str, dict[str, object]]:
         503: {
             "model": ApiErrorResponse,
             "description": "Batch execution capacity is temporarily exhausted.",
+        },
+        507: {
+            "model": ApiErrorResponse,
+            "description": "Durable batch storage does not currently have enough safe headroom.",
         },
     }
