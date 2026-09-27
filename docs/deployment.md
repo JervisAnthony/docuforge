@@ -127,3 +127,15 @@ workspaces and may remain on disk until explicit deletion, terminal TTL expiry, 
 cleanup. Deletion removes DocuForge-managed session files and metadata at the application level.
 Office and OCR processing remains inside the Railway API container and does not use an external
 conversion or OCR service.
+
+### Terminal retention cleanup interval
+
+`DOCUFORGE_BATCH_CLEANUP_INTERVAL_SECONDS=60` configures the service-owned daemon retention
+sweeper. It must be a positive integer; malformed, blank, zero and negative values fail safely
+at startup. Direct settings and service constructor values also reject booleans, floats and strings.
+A shorter interval checks cleanup sooner with more maintenance wakeups; a longer interval lowers
+wake frequency and increases post-TTL removal latency. This does not change the terminal TTL
+(default 3600 seconds). Keep the interval materially below the TTL; this is guidance, not a
+validation constraint. A healthy process normally detects expiry within roughly one interval
+of TTL eligibility. Startup and access-triggered cleanup remain, and sweeps retry committed
+DELETING cleanup. This is retention enforcement, not a retained-storage byte quota or secure erasure.

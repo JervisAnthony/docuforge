@@ -35,7 +35,15 @@ control a retained session.
 ## TTL
 
 Terminal TTL uses a persisted wall-clock `updated_at`. Expired terminal and error sessions are
-removed at startup or access time, including both their SQLite metadata and session workspace.
+removed at startup, access time, or by the service-owned periodic retention sweeper, including
+both their SQLite metadata and session workspace. Idle servers expire READY and ERROR sessions
+without another request. Committed DELETING tombstones are retried before each sweep discovers
+newly expired sessions; failed cleanup never restores a terminal session.
+
+The defaults are a 3600-second TTL and a 60-second cleanup interval. Healthy-process removal
+normally occurs at TTL plus up to roughly one cleanup interval. Scheduling uses interruptible
+Event waiting; persisted wall-clock `updated_at` continues to determine retention age.
+Shutdown joins the daemon sweeper before stopping workers and releasing storage ownership.
 Interrupted active sessions receive a fresh recovery window when restored as an error.
 Durable startup also removes unregistered UUID BatchId workspaces, including uploads left by a
 process failure before metadata registration, so rowless batch content does not remain unmanaged.

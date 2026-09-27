@@ -33,7 +33,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `${pythonCommand} -m uvicorn docuforge.api.app:app --host 127.0.0.1 --port 8000`,
+      command: `${pythonCommand} -m uvicorn docuforge.api.asgi:app --host 127.0.0.1 --port 8000`,
       cwd: '..',
       url: 'http://127.0.0.1:8000/api/v1/health',
       reuseExistingServer: !inCi,
