@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
-from threading import Event, RLock, Thread
+from shutil import disk_usage
+from threading import Condition, Event, RLock, Thread
 from time import time
 
 from docuforge.api.batch_access import (
@@ -65,6 +66,11 @@ _EXECUTION_FAILURE = BatchItemFailure(
     "batch_execution_failed", "The batch could not be completed."
 )
 _LOGGER = logging.getLogger(__name__)
+_STORAGE_ERROR_CODES = {"batch_storage_pressure", "batch_storage_unavailable"}
+
+
+def _filesystem_free_storage_bytes(storage_root: Path) -> int:
+    return disk_usage(storage_root).free
 
 
 class BatchExecutionPhase(str, Enum):
@@ -135,6 +141,9 @@ class BatchExecutionService:
         max_inflight_sessions: int = 8,
         terminal_ttl_seconds: int = 3600,
         cleanup_interval_seconds: int = 60,
+        min_free_storage_bytes: int = 200 * 1024 * 1024,
+        max_upload_request_bytes: int = 200 * 1024 * 1024,
+        free_storage_bytes: Callable[[Path], int] = _filesystem_free_storage_bytes,
         clock: Callable[[], float] = time,
         storage_directory: Path | None = None,
     ) -> None:
@@ -148,6 +157,17 @@ class BatchExecutionService:
             raise ValueError("terminal_ttl_seconds must be a positive integer")
         if type(cleanup_interval_seconds) is not int or cleanup_interval_seconds <= 0:
             raise ValueError("cleanup_interval_seconds must be a positive integer")
+        for name, value in (
+            ("min_free_storage_bytes", min_free_storage_bytes),
+            ("max_upload_request_bytes", max_upload_request_bytes),
+        ):
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        self._min_free_storage_bytes = min_free_storage_bytes
+        self._max_upload_request_bytes = max_upload_request_bytes
+        self._free_storage_bytes = free_storage_bytes
+        self._storage_root: Path | None = None
+        self._pending_storage_write_bytes = 0
         self._office_engine_factory = office_engine_factory
         self._max_inflight_sessions = max_inflight_sessions
         self._terminal_ttl_seconds = terminal_ttl_seconds
@@ -162,6 +182,7 @@ class BatchExecutionService:
         self._sessions: dict[str, _Session] = {}
         self._admitted_batch_ids: set[str] = set()
         self._lock = RLock()
+        self._storage_writes_drained = Condition(self._lock)
         self._shutdown = False
         executor = None
         try:
@@ -169,6 +190,7 @@ class BatchExecutionService:
                 storage_root = Path(storage_directory)
                 self._storage_owner_lock = BatchStorageOwnerLock.acquire(storage_root)
                 self._sessions_root, self._repository = prepare_durable_storage(storage_root)
+                self._storage_root = self._sessions_root.parent
                 self._restore_sessions()
             self._executor = ThreadPoolExecutor(
                 max_workers=max_workers, thread_name_prefix="docuforge-batch"
@@ -191,9 +213,14 @@ class BatchExecutionService:
     def create_workspace(self) -> BatchSessionWorkspace:
         """Reserve execution admission before returning an upload workspace."""
         with self._lock:
-            self._expire_locked()
             if self._shutdown:
                 raise RuntimeError("batch execution service is shut down")
+            if self._durable:
+                with suppress(BatchPersistenceError):
+                    self._sweep_locked()
+                self._require_storage_locked(self._max_upload_request_bytes)
+            else:
+                self._expire_locked()
             self._require_capacity_locked()
             batch_id = BatchId.new()
             normalized_id = str(batch_id)
@@ -330,7 +357,7 @@ class BatchExecutionService:
                 and session.result is not None
                 and session.session_error is not None
                 and session.session_error.code
-                in {"batch_packaging_failed", "batch_packaging_interrupted"}
+                in {"batch_packaging_failed", "batch_packaging_interrupted"} | _STORAGE_ERROR_CODES
             )
             selective = session.result is not None and any(
                 item.status in {BatchItemStatus.FAILED, BatchItemStatus.CANCELLED}
@@ -343,6 +370,7 @@ class BatchExecutionService:
                     message="The batch has no recoverable items.",
                 )
             normalized_id = str(session.batch.id)
+            self._require_storage_locked()
             self._reserve_admission_locked(normalized_id)
             submitted = False
             try:
@@ -480,7 +508,8 @@ class BatchExecutionService:
         if cleanup_thread is not None:
             cleanup_thread.join()
         self._executor.shutdown(wait=True, cancel_futures=False)
-        with self._lock:
+        with self._storage_writes_drained:
+            self._storage_writes_drained.wait_for(lambda: self._pending_storage_write_bytes == 0)
             if not self._durable:
                 for session in self._sessions.values():
                     session.workspace.cleanup()
@@ -506,6 +535,7 @@ class BatchExecutionService:
         try:
             if not packaging_only:
                 with self._lock:
+                    self._require_storage_locked()
                     session.phase = (
                         BatchExecutionPhase.CANCELLING
                         if session.cancellation.cancellation_requested
@@ -527,6 +557,8 @@ class BatchExecutionService:
             if result is None:
                 raise RuntimeError("batch result missing")
             if result.outputs:
+                with self._lock:
+                    self._require_storage_locked()
                 package_batch_outputs(result, session.workspace.archive_path)
                 archive_path: Path | None = session.workspace.archive_path
             else:
@@ -538,7 +570,7 @@ class BatchExecutionService:
                 session.updated_at = self._clock()
                 self._persist_locked(session)
                 self._admitted_batch_ids.discard(batch_id)
-        except Exception:  # noqa: BLE001 - process boundary must expose only safe state
+        except Exception as error:  # noqa: BLE001 - process boundary exposes only safe state
             with self._lock:
                 if result is not None:
                     session.result = result
@@ -552,6 +584,8 @@ class BatchExecutionService:
                     session.session_error = BatchSessionError(
                         "batch_execution_failed", "The batch could not be completed."
                     )
+                if isinstance(error, ApiError) and error.code in _STORAGE_ERROR_CODES:
+                    session.session_error = BatchSessionError(error.code, error.message)
                 session.archive_path = None
                 session.phase = BatchExecutionPhase.ERROR
                 session.updated_at = self._clock()
@@ -615,6 +649,46 @@ class BatchExecutionService:
                 message="The batch session was not found.",
             )
         return session
+
+    def _require_storage_locked(self, write_bytes: int = 0) -> None:
+        if self._storage_root is None:
+            return
+        try:
+            free = self._free_storage_bytes(self._storage_root)
+            if type(free) is not int or free < 0:
+                raise ValueError("invalid storage measurement")
+        except Exception:  # noqa: BLE001 - capacity-provider boundary exposes only safe errors
+            raise ApiError(
+                status_code=503,
+                code="batch_storage_unavailable",
+                message="Batch storage is temporarily unavailable. Try again later.",
+            ) from None
+        if free - self._pending_storage_write_bytes - write_bytes < self._min_free_storage_bytes:
+            raise ApiError(
+                status_code=507,
+                code="batch_storage_pressure",
+                message="Batch storage is temporarily full. Try again later.",
+            )
+
+    @contextmanager
+    def reserve_storage_write(self, byte_count: int) -> Iterator[None]:
+        """Reserve an in-progress durable upload write until it reaches the filesystem."""
+        if type(byte_count) is not int or byte_count <= 0:
+            raise ValueError("byte_count must be a positive integer")
+        if not self._durable:
+            yield
+            return
+        with self._lock:
+            if self._shutdown:
+                raise RuntimeError("batch execution service is shut down")
+            self._require_storage_locked(byte_count)
+            self._pending_storage_write_bytes += byte_count
+        try:
+            yield
+        finally:
+            with self._storage_writes_drained:
+                self._pending_storage_write_bytes -= byte_count
+                self._storage_writes_drained.notify_all()
 
     def _cleanup_loop(self) -> None:
         while not self._cleanup_stop.wait(self._cleanup_interval_seconds):

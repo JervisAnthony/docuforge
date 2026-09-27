@@ -34,6 +34,9 @@ control a retained session.
 
 ## TTL
 
+Retained durable sessions can cause new work to receive [storage-pressure backpressure](mvp3-storage-pressure.md),
+but remain accessible until normal explicit deletion or TTL. Low space never evicts unexpired sessions.
+
 Terminal TTL uses a persisted wall-clock `updated_at`. Expired terminal and error sessions are
 removed at startup, access time, or by the service-owned periodic retention sweeper, including
 both their SQLite metadata and session workspace. Idle servers expire READY and ERROR sessions

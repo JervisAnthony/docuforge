@@ -1,7 +1,8 @@
 """Secure streaming upload storage for the DocuForge API adapter."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from collections.abc import Set as AbstractSet
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -138,6 +139,7 @@ async def store_batch_uploads(
     *,
     input_directory: Path,
     policy: UploadPolicy,
+    reserve_storage_write: Callable[[int], AbstractContextManager[None]] | None = None,
 ) -> tuple[StoredUpload, ...]:
     """Store ordered uploads under isolated item directories using safe original basenames."""
     try:
@@ -168,7 +170,8 @@ async def store_batch_uploads(
             item_directory.mkdir()
             stored_path = item_directory / original_name
             file_size, request_size = await _write_upload(
-                upload, stored_path, policy=policy, request_size=request_size
+                upload, stored_path, policy=policy, request_size=request_size,
+                reserve_storage_write=reserve_storage_write,
             )
             stored_uploads.append(
                 StoredUpload(
@@ -190,6 +193,7 @@ async def _write_upload(
     *,
     policy: UploadPolicy,
     request_size: int,
+    reserve_storage_write: Callable[[int], AbstractContextManager[None]] | None = None,
 ) -> tuple[int, int]:
     file_size = 0
     try:
@@ -208,7 +212,13 @@ async def _write_upload(
                         code="upload_request_too_large",
                         message="The combined upload size exceeds the allowed size.",
                     )
-                destination.write(chunk)
+                if reserve_storage_write is None:
+                    destination.write(chunk)
+                else:
+                    with reserve_storage_write(len(chunk)):
+                        destination.write(chunk)
+                        # Release only after Python's buffered bytes reach the filesystem.
+                        destination.flush()
                 request_size += len(chunk)
     except BaseException:
         stored_path.unlink(missing_ok=True)
