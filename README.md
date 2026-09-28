@@ -51,6 +51,7 @@ metadata rather than uploaded contents and redact BatchIds from batch request pa
 Capability holders can explicitly delete terminal retained batch sessions before TTL expiry.
 Terminal batch retention is proactively cleaned after TTL even during idle server periods.
 Durable batch creation applies both execution admission and filesystem headroom backpressure.
+Batch execution also bounds cumulative published output bytes before staged artifacts are committed.
 
 ## Local development
 

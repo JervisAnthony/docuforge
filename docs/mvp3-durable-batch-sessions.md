@@ -93,3 +93,7 @@ processing, leasing, heartbeats, fencing, or cross-process cancellation.
 
 See [Durable storage ownership](mvp3-durable-storage-ownership.md) for lock lifecycle and operator
 guidance.
+
+Item-level `batch_output_limit_exceeded` failures persist and recover normally under schema v2.
+[Published output budget recovery](mvp3-batch-output-budget.md) measures preserved files again and
+uses the current deployment limit, without persisting budgets or byte totals.
