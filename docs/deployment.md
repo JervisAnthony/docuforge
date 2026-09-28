@@ -151,3 +151,18 @@ Streaming chunks reserve pending write bytes; recovery, execution and ZIP packag
 Only already-eligible TTL/deletion tombstones are reclaimed. Unexpired sessions are never evicted.
 See [durable storage pressure](mvp3-storage-pressure.md) for safe 507/503 errors and the boundary:
 this is not a hard filesystem quota or a guarantee against unpredictable converter staging expansion.
+
+## Published batch output budget
+
+```text
+DOCUFORGE_BATCH_MAX_PUBLISHED_OUTPUT_BYTES=209715200
+```
+
+This positive integer in bytes defaults to 200 MiB and bounds cumulative published converted
+outputs per batch, in both storage modes. It is independent of the upload limit and free-space
+reserve. Reducing it can prevent additional recovered outputs from being published but never deletes
+preserved outputs. Inputs, staging, archives, and metadata are outside this exact budget.
+See [published batch output budget](mvp3-batch-output-budget.md).
+
+The durable production smoke additionally reports `PASS batch-output-budget` after verifying a
+low-budget item failure, durable restart, and successful recovery with a higher budget.

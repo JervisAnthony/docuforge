@@ -142,6 +142,7 @@ class BatchExecutionService:
         terminal_ttl_seconds: int = 3600,
         cleanup_interval_seconds: int = 60,
         min_free_storage_bytes: int = 200 * 1024 * 1024,
+        max_published_output_bytes: int = 200 * 1024 * 1024,
         max_upload_request_bytes: int = 200 * 1024 * 1024,
         free_storage_bytes: Callable[[Path], int] = _filesystem_free_storage_bytes,
         clock: Callable[[], float] = time,
@@ -159,10 +160,12 @@ class BatchExecutionService:
             raise ValueError("cleanup_interval_seconds must be a positive integer")
         for name, value in (
             ("min_free_storage_bytes", min_free_storage_bytes),
+            ("max_published_output_bytes", max_published_output_bytes),
             ("max_upload_request_bytes", max_upload_request_bytes),
         ):
             if type(value) is not int or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
+        self._max_published_output_bytes = max_published_output_bytes
         self._min_free_storage_bytes = min_free_storage_bytes
         self._max_upload_request_bytes = max_upload_request_bytes
         self._free_storage_bytes = free_storage_bytes
@@ -620,6 +623,7 @@ class BatchExecutionService:
             "cancellation": session.cancellation,
             "on_progress": progress,
             "recover_from": previous,
+            "max_published_output_bytes": self._max_published_output_bytes,
         }
         if isinstance(request, BatchImageConvertRequest):
             return batch_convert_images(request, **controls)

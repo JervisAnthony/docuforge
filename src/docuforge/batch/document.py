@@ -20,6 +20,7 @@ from docuforge.batch.models import (
     BatchItemStatus,
     BatchRequest,
 )
+from docuforge.batch.output_budget import OUTPUT_LIMIT_FAILURE, PublishedOutputBudget
 from docuforge.converters.office import (
     SUPPORTED_OFFICE_SOURCE_FORMATS,
     DocxToPdfRequest,
@@ -205,6 +206,7 @@ def batch_convert_documents(
     cancellation: BatchCancellationToken | None = None,
     on_progress: BatchProgressCallback | None = None,
     recover_from: BatchDocumentResult | None = None,
+    max_published_output_bytes: int | None = None,
 ) -> BatchDocumentResult:
     """Convert supported Office items sequentially while isolating expected failures."""
     if not isinstance(request, BatchDocumentConvertRequest):
@@ -215,6 +217,7 @@ def batch_convert_documents(
         raise TypeError("cancellation must be a BatchCancellationToken")
     if on_progress is not None and not callable(on_progress):
         raise TypeError("on_progress must be callable")
+    budget = PublishedOutputBudget(max_published_output_bytes)
     _validate_output_directory(request.output_directory)
     batch_request = BatchRequest(
         request.batch_id,
@@ -225,6 +228,11 @@ def batch_convert_documents(
         ),
     )
     batch, outputs = _prepare_document_attempt(request, batch_request, recover_from)
+    try:
+        for output in outputs.values():
+            budget.track_existing(output.output_path)
+    except OSError as error:
+        raise BatchProcessingError("Unable to process the document batch.") from error
     _notify(on_progress, batch)
     temporary_directory: TemporaryDirectory[str] | None = None
     try:
@@ -294,11 +302,22 @@ def batch_convert_documents(
                 _notify(on_progress, batch)
                 continue
             try:
+                candidate_bytes = budget.candidate_size(staged_output)
+            except OSError:
+                batch = batch.fail_item(item.id, _INVALID_OUTPUT_FAILURE)
+                _notify(on_progress, batch)
+                continue
+            if not budget.can_publish(candidate_bytes):
+                batch = batch.fail_item(item.id, OUTPUT_LIMIT_FAILURE)
+                _notify(on_progress, batch)
+                continue
+            try:
                 os.replace(staged_output, final_output)
             except OSError:
                 batch = batch.fail_item(item.id, _PUBLISH_FAILURE)
                 _notify(on_progress, batch)
                 continue
+            budget.commit(candidate_bytes)
             outputs[position] = BatchDocumentOutput(
                 item.id,
                 position,

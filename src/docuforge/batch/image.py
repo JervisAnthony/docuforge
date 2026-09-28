@@ -24,6 +24,7 @@ from docuforge.batch.models import (
     BatchItemStatus,
     BatchRequest,
 )
+from docuforge.batch.output_budget import OUTPUT_LIMIT_FAILURE, PublishedOutputBudget
 from docuforge.converters.image import (
     ImageCompressPathRequest,
     ImageCompressPathResult,
@@ -273,6 +274,7 @@ def batch_convert_images(
     cancellation: BatchCancellationToken | None = None,
     on_progress: BatchProgressCallback | None = None,
     recover_from: BatchImageResult | None = None,
+    max_published_output_bytes: int | None = None,
 ) -> BatchImageResult:
     """Convert an ordered image batch while isolating expected item failures."""
     if not isinstance(request, BatchImageConvertRequest):
@@ -286,6 +288,7 @@ def batch_convert_images(
         cancellation=cancellation,
         on_progress=on_progress,
         recover_from=recover_from,
+        max_published_output_bytes=max_published_output_bytes,
     )
 
 
@@ -295,6 +298,7 @@ def batch_resize_images(
     cancellation: BatchCancellationToken | None = None,
     on_progress: BatchProgressCallback | None = None,
     recover_from: BatchImageResult | None = None,
+    max_published_output_bytes: int | None = None,
 ) -> BatchImageResult:
     """Resize an ordered image batch while isolating expected item failures."""
     if not isinstance(request, BatchImageResizeRequest):
@@ -314,6 +318,7 @@ def batch_resize_images(
         cancellation=cancellation,
         on_progress=on_progress,
         recover_from=recover_from,
+        max_published_output_bytes=max_published_output_bytes,
     )
 
 
@@ -323,6 +328,7 @@ def batch_compress_images(
     cancellation: BatchCancellationToken | None = None,
     on_progress: BatchProgressCallback | None = None,
     recover_from: BatchImageResult | None = None,
+    max_published_output_bytes: int | None = None,
 ) -> BatchImageResult:
     """Compress an ordered image batch while isolating expected item failures."""
     if not isinstance(request, BatchImageCompressRequest):
@@ -341,6 +347,7 @@ def batch_compress_images(
         cancellation=cancellation,
         on_progress=on_progress,
         recover_from=recover_from,
+        max_published_output_bytes=max_published_output_bytes,
     )
 
 
@@ -354,7 +361,9 @@ def _process_image_batch(
     cancellation: BatchCancellationToken | None,
     on_progress: BatchProgressCallback | None,
     recover_from: BatchImageResult | None,
+    max_published_output_bytes: int | None,
 ) -> BatchImageResult:
+    budget = PublishedOutputBudget(max_published_output_bytes)
     _validate_controls(cancellation, on_progress)
     _validate_output_directory(request.output_directory)
     batch_request = BatchRequest(
@@ -366,6 +375,11 @@ def _process_image_batch(
         ),
     )
     batch, outputs = _prepare_image_attempt(request, batch_request, recover_from)
+    try:
+        for output in outputs.values():
+            budget.track_existing(output.output_path)
+    except OSError as error:
+        raise BatchProcessingError("Unable to process the image batch.") from error
     _notify(on_progress, batch)
     temporary_directory: TemporaryDirectory[str] | None = None
     try:
@@ -429,11 +443,22 @@ def _process_image_batch(
                 _notify(on_progress, batch)
                 continue
             try:
+                candidate_bytes = budget.candidate_size(staged_output)
+            except OSError:
+                batch = batch.fail_item(item.id, _INVALID_OUTPUT_FAILURE)
+                _notify(on_progress, batch)
+                continue
+            if not budget.can_publish(candidate_bytes):
+                batch = batch.fail_item(item.id, OUTPUT_LIMIT_FAILURE)
+                _notify(on_progress, batch)
+                continue
+            try:
                 os.replace(staged_output, final_output)
             except OSError:
                 batch = batch.fail_item(item.id, _PUBLISH_FAILURE)
                 _notify(on_progress, batch)
                 continue
+            budget.commit(candidate_bytes)
             output = BatchImageOutput(
                 item.id,
                 position,

@@ -35,6 +35,7 @@ def create_app(
         terminal_ttl_seconds=resolved_settings.batch_terminal_ttl_seconds,
         cleanup_interval_seconds=resolved_settings.batch_cleanup_interval_seconds,
         min_free_storage_bytes=resolved_settings.batch_min_free_storage_bytes,
+        max_published_output_bytes=resolved_settings.batch_max_published_output_bytes,
         max_upload_request_bytes=resolved_settings.max_upload_request_bytes,
         storage_directory=resolved_settings.batch_storage_directory,
     )

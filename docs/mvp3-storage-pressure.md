@@ -71,3 +71,10 @@ This is NOT a hard byte quota. Converter staging can temporarily consume additio
 checks because output expansion is not always predictable before conversion. The guard does not
 guarantee that transient filesystem exhaustion or reserve crossing can never occur, including
 from other processes. It does not add pre-TTL eviction or converter-specific quotas.
+
+## Published output budget
+
+The [published batch output budget](mvp3-batch-output-budget.md) adds an exact ceiling at atomic
+publication for cumulative retained converted files. Headroom checks handle temporary and
+unpredictable filesystem pressure; the output budget does not count staging or ZIP bytes.
+Preserved files above a lowered deployment limit remain valid and downloadable.

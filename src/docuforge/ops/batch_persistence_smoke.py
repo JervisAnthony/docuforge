@@ -104,6 +104,7 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
             second.shutdown()
             _verify_idle_expiry(storage)
             _verify_storage_pressure(storage)
+            _verify_output_budget(storage)
     except BatchPersistenceSmokeError:
         raise
     except (OSError, RuntimeError, ValueError) as error:
@@ -115,7 +116,55 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
         "batch-session-delete",
         "batch-ttl-sweeper",
         "batch-storage-pressure",
+        "batch-output-budget",
     )
+
+
+def _verify_output_budget(storage: Path) -> None:
+    """Persist an item policy failure, then recover with a larger deployment cap."""
+    first = BatchExecutionService(
+        office_engine_factory=LibreOfficeEngine,
+        storage_directory=storage,
+        max_published_output_bytes=1,
+    )
+    try:
+        workspace = first.create_workspace()
+        source = workspace.inputs_directory / "smoke.png"
+        Image.new("RGB", (8, 8), "blue").save(source)
+        request = BatchImageConvertRequest(
+            (BatchImageInput(source),), workspace.output_directory, "jpg", workspace.batch_id
+        )
+        grant = first.create_session(request, workspace)
+        batch_id, token = str(request.batch_id), grant.access_token
+        _wait_ready(first, batch_id, token)
+        snapshot = first.get(batch_id, token)
+        if (
+            snapshot.batch.status.value != "failed"
+            or snapshot.batch.items[0].failure.code != "batch_output_limit_exceeded"
+            or snapshot.session_error is not None
+            or snapshot.can_download
+            or not snapshot.can_recover
+            or any(workspace.output_directory.iterdir())
+            or workspace.archive_path.exists()
+        ):
+            raise BatchPersistenceSmokeError("output budget did not isolate item failure")
+    finally:
+        first.shutdown()
+    second = BatchExecutionService(
+        office_engine_factory=LibreOfficeEngine,
+        storage_directory=storage,
+        max_published_output_bytes=1024 * 1024,
+    )
+    try:
+        second.recover(batch_id, token)
+        _wait_ready(second, batch_id, token)
+        snapshot = second.get(batch_id, token)
+        if snapshot.batch.status.value != "completed" or snapshot.session_error is not None:
+            raise BatchPersistenceSmokeError("output budget recovery failed")
+        _verify_archive(second.download_path(batch_id, token))
+        second.delete_session(batch_id, token)
+    finally:
+        second.shutdown()
 
 
 def _verify_storage_pressure(storage: Path) -> None:
