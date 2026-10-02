@@ -97,3 +97,5 @@ guidance.
 Item-level `batch_output_limit_exceeded` failures persist and recover normally under schema v2.
 [Published output budget recovery](mvp3-batch-output-budget.md) measures preserved files again and
 uses the current deployment limit, without persisting budgets or byte totals.
+
+Active download pins are process-local and are not persisted. A process crash ends its streams; restart finishes persisted DELETING tombstones normally. See [download lifecycle](mvp3-batch-download-lifecycle.md).

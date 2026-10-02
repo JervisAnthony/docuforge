@@ -88,7 +88,23 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
                     ) from None
             else:
                 raise BatchPersistenceSmokeError("wrong token was accepted")
-            second.delete_session(str(request.batch_id), grant.access_token)
+            handle = second.acquire_download(str(request.batch_id), grant.access_token)
+            try:
+                second.delete_session(str(request.batch_id), grant.access_token)
+                _verify_archive(handle.path)
+                if not workspace.path.exists():
+                    raise BatchPersistenceSmokeError("pinned workspace was removed")
+                try:
+                    second.get(str(request.batch_id), grant.access_token)
+                except ApiError as error:
+                    if error.code != "batch_not_found":
+                        raise BatchPersistenceSmokeError("pinned deletion was not hidden") from None
+                else:
+                    raise BatchPersistenceSmokeError("pinned deletion remained accessible")
+            finally:
+                handle.release()
+            if str(request.batch_id) in second._sessions:
+                raise BatchPersistenceSmokeError("released deletion remained in memory")
             if workspace.path.exists():
                 raise BatchPersistenceSmokeError("deleted workspace remained")
             repository = second._repository
@@ -117,6 +133,7 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
         "batch-ttl-sweeper",
         "batch-storage-pressure",
         "batch-output-budget",
+        "batch-download-lifecycle",
     )
 
 

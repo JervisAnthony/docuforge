@@ -4,9 +4,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Form, Header, Response, UploadFile
 from fastapi.responses import FileResponse
+from starlette.types import Receive, Scope, Send
 
 from docuforge.api.batch_access import BATCH_TOKEN_HEADER
 from docuforge.api.batches import (
+    BatchDownloadHandle,
     BatchExecutionService,
     BatchExecutionSnapshot,
     BatchSessionGrant,
@@ -39,6 +41,20 @@ from docuforge.batch import (
 )
 
 _OFFICE_EXTENSIONS = frozenset({".docx", ".pptx", ".xlsx"})
+
+
+class _PinnedFileResponse(FileResponse):
+    """Retain the accepted archive through all ASGI response exit paths."""
+
+    def __init__(self, handle: BatchDownloadHandle, **kwargs) -> None:
+        self._download_handle = handle
+        super().__init__(handle.path, **kwargs)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._download_handle.release()
 
 
 def create_batch_router(
@@ -258,13 +274,17 @@ def create_batch_router(
         batch_id: str,
         access_token: Annotated[str | None, Header(alias=BATCH_TOKEN_HEADER)] = None,
     ) -> FileResponse:
-        path = service.download_path(batch_id, access_token)
-        return FileResponse(
-            path,
-            media_type="application/zip",
-            filename=f"docuforge-batch-{batch_id}.zip",
-            headers={"Cache-Control": "no-store"},
-        )
+        handle = service.acquire_download(batch_id, access_token)
+        try:
+            return _PinnedFileResponse(
+                handle,
+                media_type="application/zip",
+                filename=f"docuforge-batch-{batch_id}.zip",
+                headers={"Cache-Control": "no-store"},
+            )
+        except BaseException:
+            handle.release()
+            raise
 
     return router
 

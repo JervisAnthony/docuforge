@@ -12,6 +12,7 @@ from pathlib import Path
 from shutil import disk_usage
 from threading import Condition, Event, RLock, Thread
 from time import time
+from uuid import uuid4
 
 from docuforge.api.batch_access import (
     generate_access_token,
@@ -130,6 +131,17 @@ class _Session:
     updated_at: float
 
 
+@dataclass(frozen=True, slots=True)
+class BatchDownloadHandle:
+    """An accepted archive read protected until its idempotent release."""
+
+    path: Path
+    _release: Callable[[], None] = field(repr=False)
+
+    def release(self) -> None:
+        self._release()
+
+
 class BatchExecutionService:
     """Own bounded workers and isolated ephemeral or durable batch sessions."""
 
@@ -185,6 +197,8 @@ class BatchExecutionService:
         self._sessions: dict[str, _Session] = {}
         self._admitted_batch_ids: set[str] = set()
         self._lock = RLock()
+        self._active_downloads: dict[str, set[str]] = {}
+        self._downloads_drained = Condition(self._lock)
         self._storage_writes_drained = Condition(self._lock)
         self._shutdown = False
         executor = None
@@ -373,6 +387,12 @@ class BatchExecutionService:
                     message="The batch has no recoverable items.",
                 )
             normalized_id = str(session.batch.id)
+            if self._active_downloads.get(normalized_id):
+                raise ApiError(
+                    status_code=409,
+                    code="batch_download_active",
+                    message="The batch cannot be recovered while a download is active.",
+                )
             self._require_storage_locked()
             self._reserve_admission_locked(normalized_id)
             submitted = False
@@ -433,7 +453,38 @@ class BatchExecutionService:
                 if not submitted:
                     self._admitted_batch_ids.discard(normalized_id)
 
+    def acquire_download(self, batch_id: str, access_token: object) -> BatchDownloadHandle:
+        """Authorize and pin an archive atomically without refreshing retention."""
+        with self._lock:
+            if self._shutdown:
+                raise RuntimeError("batch execution service is shut down")
+            path = self.download_path(batch_id, access_token)
+            normalized_id = str(batch_id)
+            pin_id = uuid4().hex
+            handle = BatchDownloadHandle(
+                path, lambda: self._release_download(normalized_id, pin_id)
+            )
+            self._active_downloads.setdefault(normalized_id, set()).add(pin_id)
+            return handle
+
+    def _release_download(self, batch_id: str, pin_id: str) -> None:
+        with self._downloads_drained:
+            pins = self._active_downloads.get(batch_id)
+            if pins is None or pin_id not in pins:
+                return
+            pins.remove(pin_id)
+            if not pins:
+                del self._active_downloads[batch_id]
+            self._downloads_drained.notify_all()
+            session = self._sessions.get(batch_id)
+            if session is not None and session.phase is BatchExecutionPhase.DELETING:
+                try:
+                    self._finalize_deletion_locked(batch_id, session)
+                except BatchPersistenceError:
+                    _LOGGER.warning("Deferred batch deletion cleanup failed; it will be retried.")
+
     def download_path(self, batch_id: str, access_token: object) -> Path:
+        """Inspect availability without a lifetime guarantee; streams use acquire_download."""
         with self._lock:
             session = self._get_authorized_locked(batch_id, access_token)
             if session.phase in {
@@ -513,6 +564,7 @@ class BatchExecutionService:
         self._executor.shutdown(wait=True, cancel_futures=False)
         with self._storage_writes_drained:
             self._storage_writes_drained.wait_for(lambda: self._pending_storage_write_bytes == 0)
+            self._downloads_drained.wait_for(lambda: not self._active_downloads)
             if not self._durable:
                 for session in self._sessions.values():
                     session.workspace.cleanup()
@@ -748,6 +800,8 @@ class BatchExecutionService:
             raise failure
 
     def _finalize_deletion_locked(self, batch_id: str, session: _Session) -> None:
+        if self._active_downloads.get(batch_id):
+            return
         session.workspace.cleanup()
         if self._repository is not None:
             self._repository.delete(batch_id)

@@ -41,3 +41,5 @@ this process-level guarantee.
 ## Boundary
 
 This feature does not add accounts, history, trash or undo, distributed deletion, or object storage.
+
+DELETING is logical and irreversible immediately. Physical workspace removal may be deferred until all already accepted download pins drain; DELETE still returns 204. See [download lifecycle](mvp3-batch-download-lifecycle.md).

@@ -11,6 +11,7 @@ def test_batch_persistence_smoke_runs_real_restart_cycle() -> None:
         "batch-ttl-sweeper",
         "batch-storage-pressure",
         "batch-output-budget",
+        "batch-download-lifecycle",
     )
 
 
@@ -26,6 +27,7 @@ def test_batch_persistence_smoke_cli_success(monkeypatch, capsys) -> None:
             "batch-ttl-sweeper",
             "batch-storage-pressure",
             "batch-output-budget",
+            "batch-download-lifecycle",
         ),
     )
     assert batch_persistence_smoke.main() == 0
@@ -37,7 +39,8 @@ def test_batch_persistence_smoke_cli_success(monkeypatch, capsys) -> None:
         "PASS batch-ttl-sweeper",
         "PASS batch-storage-pressure",
         "PASS batch-output-budget",
-        "Durable batch persistence smoke passed: 7 checks",
+        "PASS batch-download-lifecycle",
+        "Durable batch persistence smoke passed: 8 checks",
     ]
 
 

@@ -36,3 +36,5 @@ the downloads open correctly, and hard-refresh the application once to confirm t
 reloads.
 
 See `docs/mvp1-launch.md` for the complete MVP1 go/no-go sequence.
+
+The durable smoke must additionally report `PASS batch-download-lifecycle`, verifying immediate logical deletion and deferred physical cleanup of a pinned archive.
