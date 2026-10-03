@@ -88,6 +88,32 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
                     ) from None
             else:
                 raise BatchPersistenceSmokeError("wrong token was accepted")
+            normal = second.acquire_download(str(request.batch_id), grant.access_token)
+            normal.release()
+            session = second._sessions[str(request.batch_id)]
+            result, updated_at = session.result, session.updated_at
+            workspace.archive_path.write_bytes(b"not a zip")
+            try:
+                second.acquire_download(str(request.batch_id), grant.access_token)
+            except ApiError as error:
+                if (error.status_code, error.code) != (409, "batch_packaging_failed"):
+                    raise BatchPersistenceSmokeError("archive rejection was unsafe") from None
+            else:
+                raise BatchPersistenceSmokeError("invalid archive was accepted")
+            if (
+                second._active_downloads
+                or session.phase is not BatchExecutionPhase.ERROR
+                or session.result is not result
+                or session.archive_path is not None
+                or session.updated_at != updated_at
+                or result is None
+                or not all(output.output_path.is_file() for output in result.outputs)
+            ):
+                raise BatchPersistenceSmokeError("archive failure lost retained results")
+            second.recover(str(request.batch_id), grant.access_token)
+            _wait_ready(second, str(request.batch_id), grant.access_token)
+            if session.result is not result:
+                raise BatchPersistenceSmokeError("archive recovery repeated conversion")
             handle = second.acquire_download(str(request.batch_id), grant.access_token)
             try:
                 second.delete_session(str(request.batch_id), grant.access_token)
@@ -134,6 +160,7 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
         "batch-storage-pressure",
         "batch-output-budget",
         "batch-download-lifecycle",
+        "batch-archive-integrity",
     )
 
 
