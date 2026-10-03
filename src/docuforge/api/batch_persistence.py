@@ -8,11 +8,12 @@ import shutil
 import sqlite3
 import stat
 import tempfile
+import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from threading import RLock
-from zipfile import BadZipFile, ZipFile
+from zipfile import ZIP_DEFLATED, BadZipFile, LargeZipFile, ZipFile
 
 from docuforge.api.batch_access import access_token_hash_is_valid
 from docuforge.batch import (
@@ -475,9 +476,24 @@ def archive_is_valid(
         if path.resolve(strict=True) != workspace.archive_path.resolve(strict=True):
             return False
         with ZipFile(path) as archive:
-            names = tuple(archive.namelist())
+            infos = archive.infolist()
+            if any(
+                info.flag_bits & 1 or info.is_dir() or info.compress_type != ZIP_DEFLATED
+                for info in infos
+            ):
+                return False
+            names = tuple(info.filename for info in infos)
             return names == expected and len(set(names)) == len(names) and archive.testzip() is None
-    except (OSError, ValueError, BadZipFile):
+    except (
+        OSError,
+        ValueError,
+        BadZipFile,
+        LargeZipFile,
+        RuntimeError,
+        EOFError,
+        NotImplementedError,
+        zlib.error,
+    ):
         return False
 
 

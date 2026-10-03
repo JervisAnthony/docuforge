@@ -168,3 +168,5 @@ The durable production smoke additionally reports `PASS batch-output-budget` aft
 low-budget item failure, durable restart, and successful recovery with a higher budget.
 
 Graceful shutdown waits for active archive downloads before releasing durable storage ownership. No new environment variables are required. The durable smoke also reports `PASS batch-download-lifecycle`.
+
+Live archive acquisition performs ZIP integrity validation before streaming, so download startup includes bounded validation I/O. No new setting is required.

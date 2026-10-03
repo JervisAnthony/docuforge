@@ -253,3 +253,5 @@ Do not upload sensitive documents to issue reports.
 Licensed under the MIT License. See [LICENSE](LICENSE).
 
 Accepted batch downloads pin their archive through response completion so deletion, TTL cleanup and shutdown cannot truncate an in-flight stream.
+
+Retained batch ZIPs are revalidated before new downloads are pinned and streamed.

@@ -38,3 +38,5 @@ reloads.
 See `docs/mvp1-launch.md` for the complete MVP1 go/no-go sequence.
 
 The durable smoke must additionally report `PASS batch-download-lifecycle`, verifying immediate logical deletion and deferred physical cleanup of a pinned archive.
+
+The durable smoke must report `PASS batch-archive-integrity`, verifying fail-closed acquisition and packaging-only repair of a corrupted retained archive.

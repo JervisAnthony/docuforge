@@ -99,3 +99,5 @@ Item-level `batch_output_limit_exceeded` failures persist and recover normally u
 uses the current deployment limit, without persisting budgets or byte totals.
 
 Active download pins are process-local and are not persisted. A process crash ends its streams; restart finishes persisted DELETING tombstones normally. See [download lifecycle](mvp3-batch-download-lifecycle.md).
+
+The same retained archive validator runs on restart and live download acquisition. See [archive integrity](mvp3-batch-archive-integrity.md).

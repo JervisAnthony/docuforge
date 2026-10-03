@@ -57,3 +57,5 @@ No additional OS archive file lock is needed under exclusive storage ownership.
 
 This is not distributed leasing, persistent reader tracking, download resumption,
 bandwidth limiting or range-state persistence.
+
+New download acquisition revalidates the retained archive before creating a reader pin. An already accepted pinned stream is not retroactively revoked by later validation. See [archive integrity](mvp3-batch-archive-integrity.md).

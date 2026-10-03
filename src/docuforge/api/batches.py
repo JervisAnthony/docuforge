@@ -458,7 +458,8 @@ class BatchExecutionService:
         with self._lock:
             if self._shutdown:
                 raise RuntimeError("batch execution service is shut down")
-            path = self.download_path(batch_id, access_token)
+            session = self._get_authorized_locked(batch_id, access_token)
+            path = self._validated_download_path_locked(session)
             normalized_id = str(batch_id)
             pin_id = uuid4().hex
             handle = BatchDownloadHandle(
@@ -487,30 +488,49 @@ class BatchExecutionService:
         """Inspect availability without a lifetime guarantee; streams use acquire_download."""
         with self._lock:
             session = self._get_authorized_locked(batch_id, access_token)
-            if session.phase in {
-                BatchExecutionPhase.QUEUED,
-                BatchExecutionPhase.PROCESSING,
-                BatchExecutionPhase.CANCELLING,
-                BatchExecutionPhase.PACKAGING,
-            }:
-                raise ApiError(
-                    status_code=409,
-                    code="batch_not_ready",
-                    message="The batch download is not ready.",
-                )
-            if session.result is not None and not session.result.outputs:
-                raise ApiError(
-                    status_code=409,
-                    code="batch_has_no_outputs",
-                    message="The batch has no successful outputs.",
-                )
-            if session.archive_path is None or not session.archive_path.is_file():
-                raise ApiError(
-                    status_code=409,
-                    code="batch_packaging_failed",
-                    message="The batch archive is unavailable.",
-                )
-            return session.archive_path
+            return self._validated_download_path_locked(session)
+
+    def _validated_download_path_locked(self, session: _Session) -> Path:
+        if session.phase in {
+            BatchExecutionPhase.QUEUED,
+            BatchExecutionPhase.PROCESSING,
+            BatchExecutionPhase.CANCELLING,
+            BatchExecutionPhase.PACKAGING,
+        }:
+            raise ApiError(
+                status_code=409,
+                code="batch_not_ready",
+                message="The batch download is not ready.",
+            )
+        if session.result is not None and not session.result.outputs:
+            raise ApiError(
+                status_code=409,
+                code="batch_has_no_outputs",
+                message="The batch has no successful outputs.",
+            )
+        path = session.archive_path
+        if (
+            session.result is not None
+            and session.result.outputs
+            and path is not None
+            and archive_is_valid(path, session.result, session.workspace)
+        ):
+            return path
+        candidate = replace(session, archive_path=None)
+        if session.phase is BatchExecutionPhase.READY:
+            candidate.phase = BatchExecutionPhase.ERROR
+            candidate.session_error = BatchSessionError(
+                "batch_packaging_failed", "The batch outputs could not be packaged."
+            )
+        self._persist_or_api_error(candidate)
+        session.phase = candidate.phase
+        session.session_error = candidate.session_error
+        session.archive_path = None
+        raise ApiError(
+            status_code=409,
+            code="batch_packaging_failed",
+            message="The batch archive is unavailable.",
+        )
 
     def delete_session(self, batch_id: str, access_token: object) -> None:
         """Delete a terminal session after committing irreversible deletion intent."""
