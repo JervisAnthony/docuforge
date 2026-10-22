@@ -45,7 +45,7 @@ recoverable integrity error and is persisted without result/archive references.
 Healthy sibling sessions restore normally. Malformed JSON, domain state, identities,
 operations, request/result pairs, or serialized paths remain startup-fatal persistence
 errors. Expired terminal sessions follow existing retention cleanup before decoding.
-The schema remains version 2; there are no new settings or dependencies.
+Schema v3 preserves these output-integrity rules; there are no new settings or dependencies.
 
 ## Boundary
 
@@ -53,6 +53,8 @@ The schema remains version 2; there are no new settings or dependencies.
 served to downloads. A valid archive remains downloadable even if a converted source
 output later changes. Existing download pins remain authoritative.
 
-There are no cryptographic hashes, no continuous scanning, no input digest or input
-integrity manifest, and no hostile-filesystem tamper guarantee. Validation is a
-bounded reuse check, not filesystem monitoring.
+Converted-output validation adds no output hashes or continuous scanner. Separately,
+[input integrity](mvp3-batch-input-integrity.md) records SHA-256 fingerprints of new
+original uploads before conversion. Valid ZIPs and genuine packaging-only recovery
+remain independent of original-file availability. Neither boundary claims a hostile-
+filesystem tamper guarantee.

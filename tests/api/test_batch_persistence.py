@@ -44,6 +44,7 @@ from docuforge.batch import (
     BatchItemStatus,
     BatchProcessingError,
 )
+from tests.api.test_batch_service import fail_image_item
 from tests.batch.test_document import RecordingEngine
 
 
@@ -175,11 +176,12 @@ def test_version_one_database_migrates_and_legacy_session_is_removed(
     repository = BatchSessionRepository(tmp_path)
     migrated = repository.get(batch_id)
     assert migrated is not None
-    assert migrated.schema_version == 2
+    assert migrated.schema_version == 3
+    assert migrated.input_manifest_json is None
     assert migrated.access_token_hash is None
     assert repository.list_legacy_batch_ids() == (batch_id,)
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
         assert connection.execute("SELECT value FROM operator_notes").fetchone()[0] == "keep"
 
     runner = service(tmp_path)
@@ -246,6 +248,70 @@ def test_failed_version_one_migration_preserves_database_and_version(
     with sqlite3.connect(database) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
         assert connection.execute("SELECT value FROM operator_notes").fetchone()[0] == "keep"
+
+
+def version_two_ready_fixture(storage):
+    """Materialize the genuine v2 table layout with a retained READY archive."""
+    runner = service(storage)
+    workspace, request = image_request(runner, ("one.png",))
+    grant = runner.create_session(request, workspace)
+    batch_id = str(request.batch_id)
+    wait_for(runner, batch_id, grant.access_token, BatchExecutionPhase.READY)
+    row = runner._repository.get(batch_id)
+    runner.shutdown()
+    with sqlite3.connect(storage / DATABASE_NAME) as connection:
+        connection.execute("ALTER TABLE batch_sessions DROP COLUMN input_manifest_json")
+        connection.execute("UPDATE batch_sessions SET schema_version=2")
+        connection.execute("PRAGMA user_version=2")
+    return workspace, grant, row
+
+
+def test_version_two_migration_preserves_ready_legacy_session_without_hashes(tmp_path):
+    workspace, grant, before = version_two_ready_fixture(tmp_path)
+    original_archive = workspace.archive_path.read_bytes()
+    # A missing original must not block migration or an already valid ZIP.
+    next(workspace.inputs_directory.rglob("*.png")).unlink()
+    runner = service(tmp_path)
+    try:
+        row = runner._repository.get(before.batch_id)
+        assert row == replace(before, input_manifest_json=None, schema_version=3)
+        assert runner._sessions[before.batch_id].input_manifest is None
+        assert runner.download_path(before.batch_id, grant.access_token).read_bytes() == original_archive
+        with sqlite3.connect(tmp_path / DATABASE_NAME) as connection:
+            assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+            assert "input_manifest_json" in {r[1] for r in connection.execute("PRAGMA table_info(batch_sessions)")}
+    finally:
+        runner.shutdown()
+
+
+@pytest.mark.parametrize("statement", ["ALTER TABLE", "UPDATE batch_sessions", "PRAGMA user_version = 3"])
+def test_version_two_migration_failure_rolls_back_all_changes(tmp_path, statement):
+    _workspace, grant, before = version_two_ready_fixture(tmp_path)
+    database = tmp_path / DATABASE_NAME
+    with sqlite3.connect(database) as connection:
+        original_rows = connection.execute("SELECT * FROM batch_sessions").fetchall()
+
+    class FailingMigration(sqlite3.Connection):
+        def execute(self, sql, *args, **kwargs):
+            if sql.startswith(statement):
+                raise sqlite3.OperationalError("Controlled migration failure")
+            return super().execute(sql, *args, **kwargs)
+
+    with (
+        patch.object(BatchSessionRepository, "_connect", side_effect=lambda: sqlite3.connect(database, factory=FailingMigration)),
+        pytest.raises(BatchPersistenceError, match="schema migration failed"),
+    ):
+        service(tmp_path)
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert "input_manifest_json" not in {r[1] for r in connection.execute("PRAGMA table_info(batch_sessions)")}
+        assert connection.execute("SELECT * FROM batch_sessions").fetchall() == original_rows
+    runner = service(tmp_path)
+    try:
+        assert runner.get(before.batch_id, grant.access_token).phase is BatchExecutionPhase.READY
+        assert runner._repository.get(before.batch_id) == replace(before, input_manifest_json=None, schema_version=3)
+    finally:
+        runner.shutdown()
 
 
 @pytest.mark.parametrize(
@@ -647,16 +713,15 @@ def test_selective_recovery_survives_restart(tmp_path: Path) -> None:
     first = service(tmp_path)
     workspace, request = image_request(first)
     failed_input = request.items[0].input_path
-    failed_input.write_bytes(b"corrupt image")
-    grant = first.create_session(request, workspace)
-    partial = wait_for(first, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
+    with fail_image_item(failed_input):
+        grant = first.create_session(request, workspace)
+        partial = wait_for(first, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
     assert partial.can_recover
     preserved = workspace.output_directory / "0002-two.jpg"
     before = preserved.read_bytes()
     first.shutdown()
 
     second = service(tmp_path)
-    Image.new("RGB", (8, 8), "green").save(failed_input)
     assert second.recover(str(request.batch_id), grant.access_token).attempt == 2
     final = wait_for(second, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
     assert final.batch.completed_count == 2
@@ -668,10 +733,9 @@ def test_committed_selective_recovery_state_is_restart_safe(tmp_path: Path) -> N
     first = service(tmp_path)
     workspace, request = image_request(first)
     failed_input = request.items[0].input_path
-    failed_input.write_bytes(b"corrupt image")
-    grant = first.create_session(request, workspace)
-    wait_for(first, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
-    Image.new("RGB", (8, 8), "green").save(failed_input)
+    with fail_image_item(failed_input):
+        grant = first.create_session(request, workspace)
+        wait_for(first, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
 
     with patch.object(first._executor, "submit") as submit:
         queued = first.recover(str(request.batch_id), grant.access_token)

@@ -172,6 +172,7 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
             _verify_storage_pressure(storage)
             _verify_output_budget(storage)
             _verify_worker_publication(storage)
+            _verify_input_integrity(storage)
     except BatchPersistenceSmokeError:
         raise
     except (OSError, RuntimeError, ValueError) as error:
@@ -188,7 +189,60 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
         "batch-archive-integrity",
         "batch-output-integrity",
         "batch-worker-publication",
+        "batch-input-integrity",
     )
+
+
+def _verify_input_integrity(storage: Path) -> None:
+    """Refuse same-size altered uploads after restart, then retry exact originals."""
+    first = BatchExecutionService(
+        office_engine_factory=LibreOfficeEngine, storage_directory=storage,
+        max_published_output_bytes=1,
+    )
+    try:
+        workspace = first.create_workspace()
+        source = workspace.inputs_directory / "smoke.png"
+        Image.new("RGB", (8, 8), "blue").save(source)
+        original = source.read_bytes()
+        request = BatchImageConvertRequest(
+            (BatchImageInput(source),), workspace.output_directory, "jpg", workspace.batch_id,
+        )
+        grant = first.create_session(request, workspace)
+        batch_id, token = str(request.batch_id), grant.access_token
+        _wait_ready(first, batch_id, token)
+        if first.get(batch_id, token).batch.items[0].failure.code != "batch_output_limit_exceeded":
+            raise BatchPersistenceSmokeError("input integrity fixture did not reach policy failure")
+    finally:
+        first.shutdown()
+    source.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+    second = BatchExecutionService(office_engine_factory=LibreOfficeEngine, storage_directory=storage)
+    try:
+        before = second._repository.get(batch_id)
+        attempt = second.get(batch_id, token).attempt
+        outputs = tuple(workspace.output_directory.iterdir())
+        try:
+            second.recover(batch_id, token)
+        except ApiError as error:
+            if (error.status_code, error.code, error.message) != (
+                409, "batch_input_integrity_failed", "The original batch inputs could not be verified.",
+            ):
+                raise BatchPersistenceSmokeError("input integrity rejection was unsafe") from None
+        else:
+            raise BatchPersistenceSmokeError("changed original input was accepted")
+        if (
+            second._repository.get(batch_id) != before
+            or second.get(batch_id, token).attempt != attempt
+            or tuple(workspace.output_directory.iterdir()) != outputs
+            or workspace.archive_path.exists() or second._admitted_batch_ids
+        ):
+            raise BatchPersistenceSmokeError("input integrity rejection changed batch state")
+        source.write_bytes(original)
+        second.recover(batch_id, token)
+        _wait_ready(second, batch_id, token)
+        _verify_archive(second.download_path(batch_id, token))
+        second.delete_session(batch_id, token)
+    finally:
+        second.shutdown()
 
 
 def _verify_worker_publication(storage: Path) -> None:

@@ -21,6 +21,7 @@ from docuforge.api.batches import BatchExecutionPhase, BatchExecutionService
 from docuforge.api.errors import ApiError
 from docuforge.batch import BatchImageConvertRequest, BatchImageInput
 from tests.api.image_test_support import make_image
+from tests.api.test_batch_service import fail_image_item
 from tests.batch.test_document import RecordingEngine
 from tests.batch.test_image_processing import write_image
 
@@ -296,18 +297,17 @@ def test_cancelling_and_packaging_continue_to_occupy_admission() -> None:
 def test_recovery_saturation_is_atomic_and_recovery_works_after_capacity_frees() -> None:
     runner = service()
     workspace, request = request_for(runner)
-    request.items[0].input_path.unlink()
-    grant = runner.create_session(request, workspace)
-    before = wait_for_phase(
-        runner, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY
-    )
+    with fail_image_item(request.items[0].input_path):
+        grant = runner.create_session(request, workspace)
+        before = wait_for_phase(
+            runner, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY
+        )
     blocker = runner.create_workspace()
     with pytest.raises(ApiError) as captured:
         runner.recover(str(request.batch_id), grant.access_token)
     assert_capacity_error(captured.value)
     assert runner.get(str(request.batch_id), grant.access_token) == before
     runner.abandon_workspace(blocker)
-    write_image(request.items[0].input_path)
     assert runner.recover(str(request.batch_id), grant.access_token).attempt == 2
     wait_for_phase(runner, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
     runner.shutdown()

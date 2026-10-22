@@ -44,3 +44,5 @@ The durable smoke must report `PASS batch-archive-integrity`, verifying fail-clo
 The durable smoke must also report `PASS batch-output-integrity`: corrupt a retained image after shutdown, restore a recoverable integrity error with the same capability, fully retry from uploads, validate the fresh output/archive, and delete normally. Together with the two runtime engine checks, the image reports twelve PASS markers.
 
 Require `PASS batch-worker-publication` for a controlled worker READY-save failure with no false success and successful recovery. Together with existing runtime/batch checks, the production image reports thirteen PASS markers. See [worker state publication](mvp3-worker-state-publication.md).
+
+Require `PASS batch-input-integrity`: durable restart, refusal of same-length altered uploads without state/reset/attempt mutation, exact-byte restoration, successful recovery, and normal deletion. The production image now reports fourteen PASS markers. See [input integrity](mvp3-batch-input-integrity.md).

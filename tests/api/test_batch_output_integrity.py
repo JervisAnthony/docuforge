@@ -17,7 +17,7 @@ from docuforge.api.batches import BatchExecutionPhase, BatchSessionError
 from docuforge.api.errors import ApiError
 from docuforge.batch import BatchDocumentConvertRequest, BatchDocumentInput
 from tests.api.test_batch_deletion import _ready
-from tests.api.test_batch_service import create_request, service, wait_for
+from tests.api.test_batch_service import create_request, fail_image_item, service, wait_for
 from tests.batch.test_document import write_office
 
 
@@ -115,14 +115,13 @@ def test_selective_recovery_only_reuses_trusted_outputs(corrupt):
     runner = service()
     try:
         workspace, request = create_request(runner)
-        request.items[1].input_path.write_bytes(b"bad image")
-        grant = runner.create_session(request, workspace)
-        batch_id, token = str(request.batch_id), grant.access_token
-        wait_for(runner, batch_id, token, BatchExecutionPhase.READY)
+        with fail_image_item(request.items[1].input_path):
+            grant = runner.create_session(request, workspace)
+            batch_id, token = str(request.batch_id), grant.access_token
+            wait_for(runner, batch_id, token, BatchExecutionPhase.READY)
         session = runner._sessions[batch_id]
         old_output = session.result.outputs[0].output_path
         original_bytes = old_output.read_bytes()
-        Image.new("RGB", (8, 8)).save(request.items[1].input_path)
         if corrupt:
             old_output.write_bytes(b"bad output")
         import docuforge.batch.image as image_module
