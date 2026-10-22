@@ -101,3 +101,9 @@ uses the current deployment limit, without persisting budgets or byte totals.
 Active download pins are process-local and are not persisted. A process crash ends its streams; restart finishes persisted DELETING tombstones normally. See [download lifecycle](mvp3-batch-download-lifecycle.md).
 
 The same retained archive validator runs on restart and live download acquisition. See [archive integrity](mvp3-batch-archive-integrity.md).
+
+Structurally valid sessions whose retained converted outputs are corrupt restore as
+recoverable `ERROR / batch_output_integrity_failed`, with result and archive references
+durably discarded and the original terminal timestamp preserved. Structural SQLite,
+JSON, request, result, and domain corruption remains startup-fatal. See
+[output integrity](mvp3-batch-output-integrity.md); schema version 2 is unchanged.

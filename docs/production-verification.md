@@ -40,3 +40,5 @@ See `docs/mvp1-launch.md` for the complete MVP1 go/no-go sequence.
 The durable smoke must additionally report `PASS batch-download-lifecycle`, verifying immediate logical deletion and deferred physical cleanup of a pinned archive.
 
 The durable smoke must report `PASS batch-archive-integrity`, verifying fail-closed acquisition and packaging-only repair of a corrupted retained archive.
+
+The durable smoke must also report `PASS batch-output-integrity`: corrupt a retained image after shutdown, restore a recoverable integrity error with the same capability, fully retry from uploads, validate the fresh output/archive, and delete normally. Together with the two runtime engine checks, the image reports twelve PASS markers.

@@ -2,6 +2,8 @@
 
 DocuForge is a privacy-conscious PDF, image, Office, and OCR toolkit with a browser application, FastAPI service, command-line interface, and reusable Python conversion layer.
 
+Retained converted outputs are revalidated before reuse; untrusted generated artifacts are reset before a full recovery from the original uploads.
+
 The MVP is intentionally focused: process common document and image tasks without accounts, persistent document storage, or browser-side document parsing.
 
 ## MVP1 status

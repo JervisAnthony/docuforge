@@ -1,5 +1,9 @@
 # Retained batch archive integrity
 
+Archive integrity and [retained converted output integrity](mvp3-batch-output-integrity.md)
+are separate boundaries. Archive download validation does not reread all source
+output files; converted outputs are revalidated before recovery reuse and restart.
+
 Packaging validates ZIPs at publication, and durable restart already revalidates retained archives. Live downloads previously checked only path availability; acquisition now uses the same strong retained ZIP checks.
 
 After capability authorization, new download acquisition revalidates the retained ZIP under the service lock before creating a reader pin or streaming. Restart restoration uses the same `archive_is_valid` validator. `download_path` also validates, but provides no lifetime guarantee.

@@ -206,7 +206,11 @@ def test_actual_file_response_releases_on_every_exit(mode):
             if mode == "cancel":
                 raise asyncio.CancelledError()
 
-    scope = {"type": "http", "method": "GET", "headers": [], "extensions": {}}
+    # Exercise send-side completion/failure using the ASGI 2.4 disconnect contract.
+    scope = {
+        "type": "http", "method": "GET", "headers": [], "extensions": {},
+        "asgi": {"spec_version": "2.4"},
+    }
     if mode == "range":
         scope["headers"] = [(b"range", b"bytes=0-9")]
     try:
@@ -343,7 +347,10 @@ def test_delete_during_actual_response_protects_archive_until_finally():
     try:
         asyncio.run(
             response(
-                {"type": "http", "method": "GET", "headers": [], "extensions": {}}, receive, send
+                {
+                    "type": "http", "method": "GET", "headers": [], "extensions": {},
+                    "asgi": {"spec_version": "2.4"},
+                }, receive, send
             )
         )
         assert b"".join(message.get("body", b"") for message in messages) == expected

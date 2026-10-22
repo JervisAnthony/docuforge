@@ -114,6 +114,28 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
             _wait_ready(second, str(request.batch_id), grant.access_token)
             if session.result is not result:
                 raise BatchPersistenceSmokeError("archive recovery repeated conversion")
+            output = session.result.outputs[0].output_path
+            second.shutdown()
+            output.write_bytes(b"not an image")
+            second = BatchExecutionService(
+                office_engine_factory=LibreOfficeEngine,
+                max_workers=1,
+                storage_directory=storage,
+            )
+            restored = second.get(str(request.batch_id), grant.access_token)
+            session = second._sessions[str(request.batch_id)]
+            if (
+                restored.phase is not BatchExecutionPhase.ERROR
+                or restored.session_error is None
+                or restored.session_error.code != "batch_output_integrity_failed"
+                or session.result is not None
+            ):
+                raise BatchPersistenceSmokeError("untrusted output was not recoverable")
+            second.recover(str(request.batch_id), grant.access_token)
+            _wait_ready(second, str(request.batch_id), grant.access_token)
+            with Image.open(session.result.outputs[0].output_path) as image:
+                image.load()
+            _verify_archive(second.download_path(str(request.batch_id), grant.access_token))
             handle = second.acquire_download(str(request.batch_id), grant.access_token)
             try:
                 second.delete_session(str(request.batch_id), grant.access_token)
@@ -161,6 +183,7 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
         "batch-output-budget",
         "batch-download-lifecycle",
         "batch-archive-integrity",
+        "batch-output-integrity",
     )
 
 
