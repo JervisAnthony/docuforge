@@ -107,3 +107,5 @@ recoverable `ERROR / batch_output_integrity_failed`, with result and archive ref
 durably discarded and the original terminal timestamp preserved. Structural SQLite,
 JSON, request, result, and domain corruption remains startup-fatal. See
 [output integrity](mvp3-batch-output-integrity.md); schema version 2 is unchanged.
+
+Worker PROCESSING, progress, PACKAGING, READY, and normal ERROR checkpoints now save before updating live state. If SQLite also rejects the ERROR save, a safe memory-only persistence error releases admission; restart uses the last committed row. See [worker state publication](mvp3-worker-state-publication.md). Schema remains v2.

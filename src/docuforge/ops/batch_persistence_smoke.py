@@ -7,10 +7,12 @@ import sys
 import tempfile
 from pathlib import Path
 from time import monotonic, sleep
+from unittest.mock import patch
 from zipfile import ZipFile
 
 from PIL import Image
 
+from docuforge.api.batch_persistence import BatchPersistenceError
 from docuforge.api.batch_storage_lock import BatchStorageOwnershipError
 from docuforge.api.batches import BatchExecutionPhase, BatchExecutionService
 from docuforge.api.errors import ApiError
@@ -169,6 +171,7 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
             _verify_idle_expiry(storage)
             _verify_storage_pressure(storage)
             _verify_output_budget(storage)
+            _verify_worker_publication(storage)
     except BatchPersistenceSmokeError:
         raise
     except (OSError, RuntimeError, ValueError) as error:
@@ -184,7 +187,72 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
         "batch-download-lifecycle",
         "batch-archive-integrity",
         "batch-output-integrity",
+        "batch-worker-publication",
     )
+
+
+def _verify_worker_publication(storage: Path) -> None:
+    """Reject one READY save and prove publication waits for durable state."""
+    runner = BatchExecutionService(
+        office_engine_factory=LibreOfficeEngine,
+        max_workers=1,
+        storage_directory=storage,
+    )
+    try:
+        for fail_ready in (False, True):
+            workspace = runner.create_workspace()
+            source = workspace.inputs_directory / "smoke.png"
+            Image.new("RGB", (8, 8), "blue").save(source)
+            request = BatchImageConvertRequest(
+                (BatchImageInput(source),),
+                workspace.output_directory,
+                "jpg",
+                workspace.batch_id,
+            )
+            repository = runner._repository
+            save = repository.save
+            rejected = False
+
+            def persist(row, *, fail_ready=fail_ready, save=save):
+                nonlocal rejected
+                live = runner._sessions[row.batch_id]
+                if row.phase == "ready" and fail_ready and not rejected:
+                    if (
+                        live.phase is not BatchExecutionPhase.PACKAGING
+                        or live.archive_path is not None
+                    ):
+                        raise BatchPersistenceSmokeError("worker published before persistence")
+                    rejected = True
+                    raise BatchPersistenceError("Controlled worker checkpoint failure.")
+                save(row)
+
+            with patch.object(repository, "save", side_effect=persist):
+                grant = runner.create_session(request, workspace)
+                batch_id, token = str(request.batch_id), grant.access_token
+                if fail_ready:
+                    _wait_ready(runner, batch_id, token, phase=BatchExecutionPhase.ERROR)
+                else:
+                    _wait_ready(runner, batch_id, token)
+            session = runner._sessions[batch_id]
+            row = repository.get(batch_id)
+            if row.phase != session.phase.value or row.updated_at != session.updated_at:
+                raise BatchPersistenceSmokeError("worker state did not match durable commit")
+            if fail_ready:
+                if not rejected or session.archive_path is not None or runner._admitted_batch_ids:
+                    raise BatchPersistenceSmokeError("failed worker checkpoint was published")
+                retained = session.result
+                runner.recover(batch_id, token)
+                _wait_ready(runner, batch_id, token)
+                if session.result is not retained:
+                    raise BatchPersistenceSmokeError(
+                        "worker checkpoint recovery repeated conversion"
+                    )
+            if repository.get(batch_id).phase != "ready":
+                raise BatchPersistenceSmokeError("worker recovery was not committed")
+            _verify_archive(runner.download_path(batch_id, token))
+            runner.delete_session(batch_id, token)
+    finally:
+        runner.shutdown()
 
 
 def _verify_output_budget(storage: Path) -> None:
@@ -301,11 +369,17 @@ def _verify_idle_expiry(storage: Path) -> None:
         service.shutdown()
 
 
-def _wait_ready(service: BatchExecutionService, batch_id: str, access_token: str) -> None:
+def _wait_ready(
+    service: BatchExecutionService,
+    batch_id: str,
+    access_token: str,
+    *,
+    phase: BatchExecutionPhase = BatchExecutionPhase.READY,
+) -> None:
     deadline = monotonic() + 15
     while monotonic() < deadline:
         snapshot = service.get(batch_id, access_token)
-        if snapshot.phase is BatchExecutionPhase.READY:
+        if snapshot.phase is phase:
             return
         if snapshot.phase is BatchExecutionPhase.ERROR:
             raise BatchPersistenceSmokeError("batch execution failed")

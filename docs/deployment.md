@@ -172,3 +172,5 @@ Graceful shutdown waits for active archive downloads before releasing durable st
 Live archive acquisition performs ZIP integrity validation before streaming, so download startup includes bounded validation I/O. No new setting is required.
 
 Recovery may perform image/PDF validation I/O before deciding whether existing outputs can be reused. Retained output integrity requires no new environment variables. See [output integrity](mvp3-batch-output-integrity.md).
+
+Worker checkpoints publish only after successful persistence. Complete SQLite write failure can leave a safe memory-only error; restart uses the last committed checkpoint. This does not provide a distributed filesystem/SQLite transaction and adds no settings. See [worker state publication](mvp3-worker-state-publication.md).

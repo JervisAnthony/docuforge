@@ -629,6 +629,16 @@ class BatchExecutionService:
             if self._storage_owner_lock is not None:
                 self._storage_owner_lock.release()
 
+    def _publish_worker_state_locked(self, session: _Session, *, candidate: _Session) -> None:
+        """Caller holds _lock: commit a worker checkpoint, then publish its owned fields."""
+        self._persist_locked(candidate)
+        session.batch = candidate.batch
+        session.phase = candidate.phase
+        session.result = candidate.result
+        session.archive_path = candidate.archive_path
+        session.session_error = candidate.session_error
+        session.updated_at = candidate.updated_at
+
     def _execute(
         self,
         batch_id: str,
@@ -649,30 +659,40 @@ class BatchExecutionService:
             ):
                 return
             attempt = expected_attempt
+            cancellation = session.cancellation
             previous = session.result if selective else None
             result = session.result if packaging_only else None
         try:
-            if not packaging_only:
-                with self._lock:
-                    self._require_storage_locked()
-                    session.phase = (
-                        BatchExecutionPhase.CANCELLING
-                        if session.cancellation.cancellation_requested
+            with self._lock:
+                self._require_storage_locked()
+                candidate = replace(
+                    session,
+                    phase=(
+                        BatchExecutionPhase.PACKAGING
+                        if packaging_only
+                        else BatchExecutionPhase.CANCELLING
+                        if cancellation.cancellation_requested
                         else BatchExecutionPhase.PROCESSING
-                    )
-                    if selective:
-                        session.result = None
-                    session.updated_at = self._clock()
-                    self._persist_locked(session)
-                result = self._run_request(session, previous, attempt)
+                    ),
+                    result=None if selective else session.result,
+                    updated_at=self._clock(),
+                )
+                self._publish_worker_state_locked(session, candidate=candidate)
+            if not packaging_only:
+                result = self._run_request(session, previous, attempt, cancellation)
                 with self._lock:
-                    if session.attempt != attempt:
+                    if session.attempt != attempt or session.cancellation is not cancellation:
                         return
-                    session.result = result
-                    session.batch = result.batch
-                    session.phase = BatchExecutionPhase.PACKAGING
-                    session.updated_at = self._clock()
-                    self._persist_locked(session)
+                    self._publish_worker_state_locked(
+                        session,
+                        candidate=replace(
+                            session,
+                            result=result,
+                            batch=result.batch,
+                            phase=BatchExecutionPhase.PACKAGING,
+                            updated_at=self._clock(),
+                        ),
+                    )
             if result is None:
                 raise RuntimeError("batch result missing")
             if result.outputs:
@@ -683,34 +703,67 @@ class BatchExecutionService:
             else:
                 archive_path = None
             with self._lock:
-                session.archive_path = archive_path
-                session.phase = BatchExecutionPhase.READY
-                session.session_error = None
-                session.updated_at = self._clock()
-                self._persist_locked(session)
+                if session.attempt != attempt or session.cancellation is not cancellation:
+                    return
+                self._publish_worker_state_locked(
+                    session,
+                    candidate=replace(
+                        session,
+                        result=result,
+                        batch=result.batch,
+                        archive_path=archive_path,
+                        phase=BatchExecutionPhase.READY,
+                        session_error=None,
+                        updated_at=self._clock(),
+                    ),
+                )
                 self._admitted_batch_ids.discard(batch_id)
         except Exception as error:  # noqa: BLE001 - process boundary exposes only safe state
             with self._lock:
-                if result is not None:
-                    session.result = result
-                    session.batch = result.batch
-                    session.session_error = BatchSessionError(
-                        "batch_packaging_failed", "The batch outputs could not be packaged."
+                if session.attempt != attempt or session.cancellation is not cancellation:
+                    return
+                # A failed selective attempt must not lose the previous coherent result.
+                retained = result if result is not None else previous
+                if retained is not None and not retained_outputs_are_valid(
+                    session.request, retained
+                ):
+                    retained = None
+                if retained is not None:
+                    batch = retained.batch
+                    session_error = BatchSessionError(
+                        "batch_packaging_failed"
+                        if result is not None
+                        else "batch_execution_failed",
+                        "The batch outputs could not be packaged."
+                        if result is not None
+                        else "The batch could not be completed.",
                     )
                 else:
-                    session.result = None
-                    session.batch = session.batch.fail_nonterminal_items(_EXECUTION_FAILURE)
-                    session.session_error = BatchSessionError(
+                    batch = session.batch.fail_nonterminal_items(_EXECUTION_FAILURE)
+                    session_error = BatchSessionError(
                         "batch_execution_failed", "The batch could not be completed."
                     )
                 if isinstance(error, ApiError) and error.code in _STORAGE_ERROR_CODES:
-                    session.session_error = BatchSessionError(error.code, error.message)
-                session.archive_path = None
-                session.phase = BatchExecutionPhase.ERROR
-                session.updated_at = self._clock()
+                    session_error = BatchSessionError(error.code, error.message)
+                candidate = replace(
+                    session,
+                    result=retained,
+                    batch=batch,
+                    session_error=session_error,
+                    archive_path=None,
+                    phase=BatchExecutionPhase.ERROR,
+                    updated_at=self._clock(),
+                )
                 try:
-                    self._persist_locked(session)
+                    self._publish_worker_state_locked(session, candidate=candidate)
                 except BatchPersistenceError:
+                    # SQLite is unavailable: only this explicitly memory-only fallback
+                    # may diverge from the last committed row, which governs restart.
+                    session.batch = candidate.batch
+                    session.result = candidate.result
+                    session.archive_path = None
+                    session.phase = BatchExecutionPhase.ERROR
+                    session.updated_at = candidate.updated_at
                     session.session_error = BatchSessionError(
                         "batch_persistence_failed",
                         "The batch session could not be persisted.",
@@ -723,20 +776,34 @@ class BatchExecutionService:
         session: _Session,
         previous: BatchExecutionResult | None,
         attempt: int,
+        expected_cancellation: BatchCancellationToken | None = None,
     ) -> BatchExecutionResult:
+        cancellation = (
+            session.cancellation if expected_cancellation is None else expected_cancellation
+        )
+
         def progress(batch: Batch) -> None:
             with self._lock:
-                if session.attempt != attempt:
+                if session.attempt != attempt or session.cancellation is not cancellation:
                     return
-                session.batch = batch
-                if session.phase is not BatchExecutionPhase.CANCELLING:
-                    session.phase = BatchExecutionPhase.PROCESSING
-                session.updated_at = self._clock()
-                self._persist_locked(session)
+                self._publish_worker_state_locked(
+                    session,
+                    candidate=replace(
+                        session,
+                        batch=batch,
+                        phase=(
+                            BatchExecutionPhase.CANCELLING
+                            if cancellation.cancellation_requested
+                            or session.phase is BatchExecutionPhase.CANCELLING
+                            else BatchExecutionPhase.PROCESSING
+                        ),
+                        updated_at=self._clock(),
+                    ),
+                )
 
         request = session.request
         controls = {
-            "cancellation": session.cancellation,
+            "cancellation": cancellation,
             "on_progress": progress,
             "recover_from": previous,
             "max_published_output_bytes": self._max_published_output_bytes,
