@@ -42,3 +42,5 @@ The durable smoke must additionally report `PASS batch-download-lifecycle`, veri
 The durable smoke must report `PASS batch-archive-integrity`, verifying fail-closed acquisition and packaging-only repair of a corrupted retained archive.
 
 The durable smoke must also report `PASS batch-output-integrity`: corrupt a retained image after shutdown, restore a recoverable integrity error with the same capability, fully retry from uploads, validate the fresh output/archive, and delete normally. Together with the two runtime engine checks, the image reports twelve PASS markers.
+
+Require `PASS batch-worker-publication` for a controlled worker READY-save failure with no false success and successful recovery. Together with existing runtime/batch checks, the production image reports thirteen PASS markers. See [worker state publication](mvp3-worker-state-publication.md).
