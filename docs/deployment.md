@@ -170,3 +170,5 @@ low-budget item failure, durable restart, and successful recovery with a higher 
 Graceful shutdown waits for active archive downloads before releasing durable storage ownership. No new environment variables are required. The durable smoke also reports `PASS batch-download-lifecycle`.
 
 Live archive acquisition performs ZIP integrity validation before streaming, so download startup includes bounded validation I/O. No new setting is required.
+
+Recovery may perform image/PDF validation I/O before deciding whether existing outputs can be reused. Retained output integrity requires no new environment variables. See [output integrity](mvp3-batch-output-integrity.md).

@@ -13,6 +13,7 @@ def test_batch_persistence_smoke_runs_real_restart_cycle() -> None:
         "batch-output-budget",
         "batch-download-lifecycle",
         "batch-archive-integrity",
+        "batch-output-integrity",
     )
 
 
@@ -30,6 +31,7 @@ def test_batch_persistence_smoke_cli_success(monkeypatch, capsys) -> None:
             "batch-output-budget",
             "batch-download-lifecycle",
             "batch-archive-integrity",
+            "batch-output-integrity",
         ),
     )
     assert batch_persistence_smoke.main() == 0
@@ -43,7 +45,8 @@ def test_batch_persistence_smoke_cli_success(monkeypatch, capsys) -> None:
         "PASS batch-output-budget",
         "PASS batch-download-lifecycle",
         "PASS batch-archive-integrity",
-        "Durable batch persistence smoke passed: 9 checks",
+        "PASS batch-output-integrity",
+        "Durable batch persistence smoke passed: 10 checks",
     ]
 
 

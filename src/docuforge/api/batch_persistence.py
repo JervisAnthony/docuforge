@@ -16,6 +16,7 @@ from threading import RLock
 from zipfile import ZIP_DEFLATED, BadZipFile, LargeZipFile, ZipFile
 
 from docuforge.api.batch_access import access_token_hash_is_valid
+from docuforge.api.batch_artifacts import retained_outputs_are_valid
 from docuforge.batch import (
     Batch,
     BatchDocumentConvertRequest,
@@ -37,8 +38,8 @@ from docuforge.batch import (
     InvalidBatchDefinitionError,
     InvalidBatchTransitionError,
 )
-from docuforge.batch.document import _valid_preserved_pdf
-from docuforge.batch.image import _valid_preserved_image
+from docuforge.batch.document import _output_name as _pdf_output_name
+from docuforge.batch.image import _output_name as _image_output_name
 
 SCHEMA_VERSION = 2
 DATABASE_NAME = "batch-sessions.sqlite3"
@@ -47,6 +48,15 @@ _PHASES = frozenset({"queued", "processing", "cancelling", "packaging", "ready",
 
 class BatchPersistenceError(RuntimeError):
     """Safe internal failure for durable batch state."""
+
+
+class BatchRetainedOutputIntegrityError(BatchPersistenceError):
+    """Valid persisted metadata whose converted files are no longer trustworthy."""
+
+    def __init__(self, request: object, batch: Batch) -> None:
+        super().__init__("Retained batch outputs could not be verified.")
+        self.request = request
+        self.batch = batch
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,7 +277,14 @@ class BatchSessionWorkspace:
             node = self.path.lstat()
             if stat.S_ISLNK(node.st_mode) or not stat.S_ISDIR(node.st_mode):
                 raise OSError
-            for directory in (self.inputs_directory, self.output_directory):
+            # Generated nodes may be absent or damaged after an interrupted reset.
+            # Restoration validates retained files separately; recovery owns their reset.
+            directories = (
+                (self.inputs_directory,)
+                if durable and not create
+                else (self.inputs_directory, self.output_directory)
+            )
+            for directory in directories:
                 child = directory.lstat()
                 if stat.S_ISLNK(child.st_mode) or not stat.S_ISDIR(child.st_mode):
                     raise OSError
@@ -308,6 +325,38 @@ class BatchSessionWorkspace:
     @property
     def archive_path(self) -> Path:
         return self.path / "result.zip"
+
+    def _remove_generated_node(self, path: Path) -> None:
+        # Only fixed direct children are accepted. lstat/unlink never follow links.
+        try:
+            root = self.path.lstat()
+            if stat.S_ISLNK(root.st_mode) or not stat.S_ISDIR(root.st_mode):
+                raise OSError
+            if path not in (self.output_directory, self.archive_path):
+                raise ValueError
+            try:
+                node = path.lstat()
+            except FileNotFoundError:
+                return
+            if stat.S_ISDIR(node.st_mode) and not stat.S_ISLNK(node.st_mode):
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        except (OSError, ValueError) as error:
+            raise BatchPersistenceError("Generated batch artifacts could not be reset.") from error
+
+    def reset_archive_artifact(self) -> None:
+        """Remove only the canonical archive node without following a symlink."""
+        self._remove_generated_node(self.archive_path)
+
+    def reset_generated_artifacts(self) -> None:
+        """Reset generated files while leaving original uploads untouched."""
+        self._remove_generated_node(self.output_directory)
+        self.reset_archive_artifact()
+        try:
+            self.output_directory.mkdir()
+        except OSError as error:
+            raise BatchPersistenceError("Generated batch artifacts could not be reset.") from error
 
     def cleanup(self) -> None:
         if self._cleaned:
@@ -453,6 +502,8 @@ def decode_record(
             raise ValueError
         if record.archive_available and (result is None or not result.outputs):
             raise ValueError
+        if result is not None and not retained_outputs_are_valid(request, result):
+            raise BatchRetainedOutputIntegrityError(request, batch)
         return request, batch, result, error
     except (
         KeyError,
@@ -684,7 +735,11 @@ def _decode_result(
             raise TypeError
         _require_keys(raw, {"item_id", "position", "input", "output", "source_format", "target_format"})
         input_path = _resolve_relative_file(raw["input"], workspace.path, require_file=True)
-        output_path = _resolve_relative_file(raw["output"], workspace.path, require_file=True)
+        # Decode output paths lexically: missing/changed filesystem nodes are artifact
+        # failures, whereas traversal and mismatched serialized paths remain metadata failures.
+        output_path = _resolve_relative_file(
+            raw["output"], workspace.path, require_file=False, lexical=True
+        )
         values.append((raw, input_path, output_path))
     if payload["kind"] == "image" and isinstance(
         request, (BatchImageConvertRequest, BatchImageResizeRequest, BatchImageCompressRequest)
@@ -697,11 +752,7 @@ def _decode_result(
             for raw, input_path, output_path in values
         )
         result = BatchImageResult(batch, workspace.output_directory, outputs)
-        if any(
-            not _valid_preserved_image(output, source=request.items[output.position], request=request)
-            for output in outputs
-        ):
-            raise ValueError
+        _validate_output_metadata(request, result)
         return result
     if payload["kind"] == "document" and isinstance(request, BatchDocumentConvertRequest):
         outputs = tuple(
@@ -712,13 +763,32 @@ def _decode_result(
             for raw, input_path, output_path in values
         )
         result = BatchDocumentResult(batch, workspace.output_directory, outputs)
-        if any(
-            not _valid_preserved_pdf(output, source=request.items[output.position], request=request)
-            for output in outputs
-        ):
-            raise ValueError
+        _validate_output_metadata(request, result)
         return result
     raise ValueError
+
+
+def _validate_output_metadata(request, result) -> None:
+    for output in result.outputs:
+        source = request.items[output.position]
+        name = (
+            _image_output_name(source.input_path, output.position, request.target_format)
+            if isinstance(result, BatchImageResult)
+            else _pdf_output_name(source.input_path, output.position)
+        )
+        if (
+            output.input_path != source.input_path
+            or output.output_path != request.output_directory / name
+            or (
+                isinstance(result, BatchImageResult)
+                and output.target_format is not request.target_format
+            )
+            or (
+                isinstance(result, BatchDocumentResult)
+                and output.source_format.value != source.input_path.suffix.lower().lstrip(".")
+            )
+        ):
+            raise ValueError
 
 
 def _request_operation(request: object) -> str:
@@ -744,7 +814,9 @@ def _relative_file(path: Path, root: Path) -> str:
         raise BatchPersistenceError("Batch artifact path is unsafe.") from error
 
 
-def _resolve_relative_file(value: object, root: Path, *, require_file: bool) -> Path:
+def _resolve_relative_file(
+    value: object, root: Path, *, require_file: bool, lexical: bool = False
+) -> Path:
     if not isinstance(value, str) or not value:
         raise TypeError
     posix = PurePosixPath(value)
@@ -755,6 +827,8 @@ def _resolve_relative_file(value: object, root: Path, *, require_file: bool) -> 
     ):
         raise ValueError
     candidate = root.joinpath(*posix.parts)
+    if lexical:
+        return candidate
     resolved = candidate.resolve(strict=require_file)
     resolved.relative_to(root.resolve(strict=True))
     if require_file:

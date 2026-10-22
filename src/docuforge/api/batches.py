@@ -19,8 +19,10 @@ from docuforge.api.batch_access import (
     hash_access_token,
     verify_access_token,
 )
+from docuforge.api.batch_artifacts import retained_outputs_are_valid
 from docuforge.api.batch_persistence import (
     BatchPersistenceError,
+    BatchRetainedOutputIntegrityError,
     BatchSessionRepository,
     BatchSessionWorkspace,
     archive_is_valid,
@@ -92,6 +94,12 @@ class BatchSessionError:
 
     code: str
     message: str
+
+
+_OUTPUT_INTEGRITY_ERROR = BatchSessionError(
+    "batch_output_integrity_failed",
+    "The retained batch outputs could not be verified. Retry the batch.",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,10 +401,37 @@ class BatchExecutionService:
                     code="batch_download_active",
                     message="The batch cannot be recovered while a download is active.",
                 )
+            integrity_failed = (
+                (packaging_only or selective)
+                and session.result is not None
+                and not retained_outputs_are_valid(session.request, session.result)
+            )
             self._require_storage_locked()
             self._reserve_admission_locked(normalized_id)
             submitted = False
             try:
+                if integrity_failed:
+                    candidate = replace(
+                        session, phase=BatchExecutionPhase.ERROR, result=None,
+                        archive_path=None, session_error=_OUTPUT_INTEGRITY_ERROR,
+                    )
+                    self._persist_or_api_error(candidate)
+                    session.phase = candidate.phase
+                    session.result = None
+                    session.archive_path = None
+                    session.session_error = candidate.session_error
+                    packaging_only = selective = False
+                try:
+                    if packaging_only:
+                        session.workspace.reset_archive_artifact()
+                    elif not selective:
+                        session.workspace.reset_generated_artifacts()
+                except BatchPersistenceError:
+                    raise ApiError(
+                        status_code=503,
+                        code="batch_recovery_failed",
+                        message="The batch could not be prepared for recovery. Try again later.",
+                    ) from None
                 if packaging_only:
                     next_batch = session.batch
                     next_result = session.result
@@ -431,6 +466,7 @@ class BatchExecutionService:
                         selective,
                         packaging_only,
                         candidate.attempt,
+                        next_cancellation,
                     )
                 except Exception:  # noqa: BLE001 - submission is an infrastructure boundary
                     raise ApiError(
@@ -599,10 +635,18 @@ class BatchExecutionService:
         selective: bool,
         packaging_only: bool,
         expected_attempt: int,
+        expected_cancellation: BatchCancellationToken | None = None,
     ) -> None:
         with self._lock:
             session = self._sessions.get(batch_id)
-            if session is None or session.attempt != expected_attempt:
+            if (
+                session is None
+                or session.attempt != expected_attempt
+                or (
+                    expected_cancellation is not None
+                    and session.cancellation is not expected_cancellation
+                )
+            ):
                 return
             attempt = expected_attempt
             previous = session.result if selective else None
@@ -909,7 +953,13 @@ class BatchExecutionService:
                     cleanup_durable_workspace(self._sessions_root, record.batch_id)
                     self._repository.delete(record.batch_id)
                     continue
-                request, batch, result, error = decode_record(record, workspace)
+                integrity_failed = False
+                try:
+                    request, batch, result, error = decode_record(record, workspace)
+                except BatchRetainedOutputIntegrityError as integrity_error:
+                    request, batch = integrity_error.request, integrity_error.batch
+                    result, error = None, None
+                    integrity_failed = True
             except (TypeError, ValueError) as decode_error:
                 raise BatchPersistenceError(
                     "Stored batch session could not be restored."
@@ -927,7 +977,10 @@ class BatchExecutionService:
                 session_error=None if error is None else BatchSessionError(*error),
                 updated_at=record.updated_at,
             )
-            if phase in {
+            if integrity_failed:
+                session.phase = BatchExecutionPhase.ERROR
+                session.session_error = _OUTPUT_INTEGRITY_ERROR
+            elif phase in {
                 BatchExecutionPhase.QUEUED,
                 BatchExecutionPhase.PROCESSING,
                 BatchExecutionPhase.CANCELLING,
@@ -963,9 +1016,13 @@ class BatchExecutionService:
                         "The batch outputs could not be packaged.",
                     )
                     session.updated_at = now
-            self._sessions[record.batch_id] = session
-            if session.phase is not phase or session.updated_at != record.updated_at:
+            if (
+                integrity_failed
+                or session.phase is not phase
+                or session.updated_at != record.updated_at
+            ):
                 self._persist_locked(session)
+            self._sessions[record.batch_id] = session
 
     def _snapshot_locked(self, session: _Session) -> BatchExecutionSnapshot:
         recoverable_items = any(
