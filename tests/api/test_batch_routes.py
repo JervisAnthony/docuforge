@@ -16,6 +16,7 @@ from docuforge.api.batch_access import BATCH_TOKEN_HEADER, hash_access_token
 from docuforge.api.batch_persistence import BatchPersistenceError
 from docuforge.api.config import ApiSettings
 from tests.api.image_test_support import make_image
+from tests.api.test_batch_service import fail_image_item
 from tests.batch.test_document import RecordingEngine
 
 
@@ -383,17 +384,18 @@ def test_failed_durable_recover_preserves_terminal_state_and_zip(tmp_path: Path)
     repository = app.state.batch_service._repository
     assert repository is not None
     real_runner = batches_module.batch_convert_images
-    missing_path: list[Path] = []
+    failed_paths: list[Path] = []
 
-    def first_item_missing(request: object, *args: object, **kwargs: object) -> object:
-        if not missing_path:
+    def first_item_failure(request: object, *args: object, **kwargs: object) -> object:
+        if not failed_paths:
             path = request.items[0].input_path  # type: ignore[attr-defined]
-            missing_path.append(path)
-            path.write_bytes(b"corrupt image")
+            failed_paths.append(path)
+            with fail_image_item(path):
+                return real_runner(request, *args, **kwargs)  # type: ignore[arg-type]
         return real_runner(request, *args, **kwargs)  # type: ignore[arg-type]
 
     with (
-        patch.object(batches_module, "batch_convert_images", side_effect=first_item_missing),
+        patch.object(batches_module, "batch_convert_images", side_effect=first_item_failure),
         TestClient(app) as client,
     ):
         accepted = client.post(
@@ -425,7 +427,6 @@ def test_failed_durable_recover_preserves_terminal_state_and_zip(tmp_path: Path)
         assert archive_path.is_file()
         assert client.get(f"{location}/download", headers=headers).content == zip_before
 
-        missing_path[0].write_bytes(make_image())
         retried = client.post(f"{location}/recover", headers=headers)
         assert retried.status_code == 202
         assert retried.json()["attempt"] == 2

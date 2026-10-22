@@ -241,24 +241,21 @@ def test_error_archive_preserves_original_error(tmp_path, valid):
 def test_partial_repair_then_selective_recovery():
     from docuforge.api import batches
     from docuforge.batch import BatchStatus
-    from tests.api.test_batch_service import create_request, service
-    from tests.batch.test_image_processing import write_image
+    from tests.api.test_batch_service import create_request, fail_image_item, service
 
     runner = service()
     workspace, request = create_request(runner)
-    missing = request.items[0].input_path
-    missing.unlink()
-    grant = runner.create_session(request, workspace)
-    batch_id, token = str(request.batch_id), grant.access_token
-    try:
+    with fail_image_item(request.items[0].input_path):
+        grant = runner.create_session(request, workspace)
+        batch_id, token = str(request.batch_id), grant.access_token
         partial = wait_for(runner, batch_id, token, BatchExecutionPhase.READY)
+    try:
         assert partial.batch.status is BatchStatus.PARTIAL
         preserved = request.output_directory / "0002-two.jpg"
         before = preserved.read_bytes()
         workspace.archive_path.write_bytes(b"bad")
         with pytest.raises(ApiError):
             runner.acquire_download(batch_id, token)
-        write_image(missing)
         with patch.object(
             batches, "batch_convert_images", side_effect=AssertionError("reconverted")
         ):

@@ -64,7 +64,7 @@ API process. It defaults to 8 and must be at least `batch_max_workers` (2 by def
 limit based on converter cost and available memory and storage; arbitrarily large values defeat
 backpressure. This limit does not cap retained terminal storage.
 
-Opening a Commit 56 schema-v1 database migrates it transactionally to schema v2. Pre-token rows
+Opening a Commit 56 schema-v1 database migrates it transactionally to schema v3. Pre-token rows
 and their BatchId workspaces are removed because no secure access capability was issued for them.
 
 For preview deployments, add the exact preview origin to
@@ -174,3 +174,5 @@ Live archive acquisition performs ZIP integrity validation before streaming, so 
 Recovery may perform image/PDF validation I/O before deciding whether existing outputs can be reused. Retained output integrity requires no new environment variables. See [output integrity](mvp3-batch-output-integrity.md).
 
 Worker checkpoints publish only after successful persistence. Complete SQLite write failure can leave a safe memory-only error; restart uses the last committed checkpoint. This does not provide a distributed filesystem/SQLite transaction and adds no settings. See [worker state publication](mvp3-worker-state-publication.md).
+
+New batches hash original uploads at acceptance and before conversion/reprocessing using bounded SHA-256 reads. Schema v2 migrates transactionally to v3 without backfilling old fingerprints; legacy batches retain structural validation. No new environment variables are required. Valid completed ZIPs and packaging-only repair do not require originals. See [input integrity](mvp3-batch-input-integrity.md).

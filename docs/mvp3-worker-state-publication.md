@@ -50,7 +50,7 @@ This is atomic application publication relative to successful SQLite saves. It i
 not a distributed transaction between SQLite and the filesystem. Uploaded inputs
 and converted outputs remain separate filesystem artifacts, and unpublished files
 may survive a failed checkpoint until full retry cleans them. The existing exclusive
-single-owner service, schema version 2, storage/admission gates, output budget,
+single-owner service, schema version 3, storage/admission gates, output budget,
 retention, deletion, and download/integrity protections remain authoritative.
 
 The durable production smoke reports `PASS batch-worker-publication` after normal

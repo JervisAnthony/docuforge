@@ -17,6 +17,11 @@ from zipfile import ZIP_DEFLATED, BadZipFile, LargeZipFile, ZipFile
 
 from docuforge.api.batch_access import access_token_hash_is_valid
 from docuforge.api.batch_artifacts import retained_outputs_are_valid
+from docuforge.api.batch_inputs import (
+    BatchInputFingerprint,
+    decode_manifest_payload,
+    manifest_payload,
+)
 from docuforge.batch import (
     Batch,
     BatchDocumentConvertRequest,
@@ -41,7 +46,7 @@ from docuforge.batch import (
 from docuforge.batch.document import _output_name as _pdf_output_name
 from docuforge.batch.image import _output_name as _image_output_name
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DATABASE_NAME = "batch-sessions.sqlite3"
 _PHASES = frozenset({"queued", "processing", "cancelling", "packaging", "ready", "error", "deleting"})
 
@@ -76,6 +81,7 @@ class BatchSessionRecord:
     archive_available: bool
     updated_at: float
     schema_version: int = SCHEMA_VERSION
+    input_manifest_json: str | None = None
 
 
 class BatchSessionRepository:
@@ -111,7 +117,7 @@ class BatchSessionRepository:
     def _initialize(self) -> None:
         with self._lock, self._connection() as connection:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in {0, 1, SCHEMA_VERSION}:
+            if version not in {0, 1, 2, SCHEMA_VERSION}:
                 raise BatchPersistenceError("Unsupported batch persistence schema version.")
             if version == 0:
                 connection.execute("PRAGMA journal_mode = WAL")
@@ -129,18 +135,23 @@ class BatchSessionRepository:
                     result_json TEXT,
                     session_error_json TEXT,
                     archive_available INTEGER NOT NULL,
-                    updated_at REAL NOT NULL
+                    updated_at REAL NOT NULL,
+                    input_manifest_json TEXT
                     )"""
                 )
-                connection.execute("PRAGMA user_version = 2")
-            elif version == 1:
+                connection.execute("PRAGMA user_version = 3")
+            elif version in {1, 2}:
                 try:
                     connection.execute("BEGIN IMMEDIATE")
+                    if version == 1:
+                        connection.execute(
+                            "ALTER TABLE batch_sessions ADD COLUMN access_token_hash TEXT"
+                        )
                     connection.execute(
-                        "ALTER TABLE batch_sessions ADD COLUMN access_token_hash TEXT"
+                        "ALTER TABLE batch_sessions ADD COLUMN input_manifest_json TEXT"
                     )
-                    connection.execute("UPDATE batch_sessions SET schema_version = 2")
-                    connection.execute("PRAGMA user_version = 2")
+                    connection.execute("UPDATE batch_sessions SET schema_version = 3")
+                    connection.execute("PRAGMA user_version = 3")
                     connection.commit()
                 except sqlite3.Error:
                     connection.rollback()
@@ -160,11 +171,11 @@ class BatchSessionRepository:
         sql = (
             "INSERT INTO batch_sessions (batch_id, access_token_hash, schema_version, operation, attempt, phase, "
             "cancellation_requested, request_json, batch_json, result_json, session_error_json, "
-            "archive_available, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "archive_available, updated_at, input_manifest_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             if insert
             else "UPDATE batch_sessions SET access_token_hash=?, schema_version=?, operation=?, attempt=?, phase=?, "
             "cancellation_requested=?, request_json=?, batch_json=?, result_json=?, "
-            "session_error_json=?, archive_available=?, updated_at=? WHERE batch_id=?"
+            "session_error_json=?, archive_available=?, updated_at=?, input_manifest_json=? WHERE batch_id=?"
         )
         insert_values = (
             record.batch_id,
@@ -180,6 +191,7 @@ class BatchSessionRepository:
             record.session_error_json,
             int(record.archive_available),
             record.updated_at,
+            record.input_manifest_json,
         )
         update_values = (*insert_values[1:], record.batch_id)
         try:
@@ -201,7 +213,7 @@ class BatchSessionRepository:
                 row = connection.execute(
                     "SELECT batch_id, access_token_hash, schema_version, operation, attempt, phase, "
                     "cancellation_requested, request_json, batch_json, result_json, "
-                    "session_error_json, archive_available, updated_at "
+                    "session_error_json, archive_available, updated_at, input_manifest_json "
                     "FROM batch_sessions WHERE batch_id=?",
                     (normalized,),
                 ).fetchone()
@@ -217,7 +229,7 @@ class BatchSessionRepository:
                 rows = connection.execute(
                     "SELECT batch_id, access_token_hash, schema_version, operation, attempt, phase, "
                     "cancellation_requested, request_json, batch_json, result_json, "
-                    "session_error_json, archive_available, updated_at "
+                    "session_error_json, archive_available, updated_at, input_manifest_json "
                     "FROM batch_sessions ORDER BY batch_id"
                 ).fetchall()
             return tuple(_record_from_row(row, allow_legacy=True) for row in rows)
@@ -277,10 +289,10 @@ class BatchSessionWorkspace:
             node = self.path.lstat()
             if stat.S_ISLNK(node.st_mode) or not stat.S_ISDIR(node.st_mode):
                 raise OSError
-            # Generated nodes may be absent or damaged after an interrupted reset.
-            # Restoration validates retained files separately; recovery owns their reset.
+            # Artifact availability is checked at reuse. Missing originals must not
+            # block restoration of valid completed outputs and archives.
             directories = (
-                (self.inputs_directory,)
+                ()
                 if durable and not create
                 else (self.inputs_directory, self.output_directory)
             )
@@ -441,6 +453,7 @@ def encode_record(
     updated_at: float,
     workspace: BatchSessionWorkspace,
     access_token_hash: str,
+    input_manifest: tuple[BatchInputFingerprint, ...] | None = None,
 ) -> BatchSessionRecord:
     request_payload = _encode_request(request, workspace)
     return BatchSessionRecord(
@@ -460,6 +473,9 @@ def encode_record(
         ),
         archive_available=archive_available,
         updated_at=updated_at,
+        input_manifest_json=(
+            None if input_manifest is None else _dump(manifest_payload(request, input_manifest))
+        ),
     )
 
 
@@ -477,6 +493,7 @@ def decode_record(
         request = _decode_request(_load_object(record.request_json), workspace)
         if str(request.batch_id) != record.batch_id:  # type: ignore[attr-defined]
             raise ValueError
+        decode_input_manifest(record, request)
         batch = _decode_batch(_load_object(record.batch_json), request)
         if str(batch.operation) != record.operation or str(batch.id) != record.batch_id:
             raise ValueError
@@ -516,6 +533,18 @@ def decode_record(
         raise BatchPersistenceError("Stored batch session metadata is invalid.") from error
 
 
+def decode_input_manifest(
+    record: BatchSessionRecord, request: object
+) -> tuple[BatchInputFingerprint, ...] | None:
+    try:
+        return (
+            None if record.input_manifest_json is None
+            else decode_manifest_payload(request, _load_object(record.input_manifest_json))
+        )
+    except (TypeError, ValueError, InvalidBatchDefinitionError) as error:
+        raise BatchPersistenceError("Stored input manifest metadata is invalid.") from error
+
+
 def archive_is_valid(
     path: Path, result: BatchImageResult | BatchDocumentResult, workspace: BatchSessionWorkspace
 ) -> bool:
@@ -553,7 +582,7 @@ def _encode_request(request: object, workspace: BatchSessionWorkspace) -> dict[s
         {
             "id": str(item.id),
             "descriptor": item.descriptor,
-            "input": _relative_file(item.input_path, workspace.path),
+            "input": _relative_input_file(item.input_path, workspace),
         }
         for item in request.items  # type: ignore[attr-defined]
     ]
@@ -609,7 +638,7 @@ def _decode_request(payload: dict[str, object], workspace: BatchSessionWorkspace
         descriptor = raw["descriptor"]
         if not isinstance(descriptor, str) or not descriptor.strip():
             raise ValueError
-        path = _resolve_relative_file(raw["input"], workspace.path, require_file=True)
+        path = _resolve_input_file(raw["input"], workspace)
         item_values.append((path, raw["id"], descriptor))
     if kind == "office.to_pdf":
         items = tuple(BatchDocumentInput(path, item_id, descriptor) for path, item_id, descriptor in item_values)
@@ -712,7 +741,7 @@ def _encode_result(
             {
                 "item_id": str(output.item_id),
                 "position": output.position,
-                "input": _relative_file(output.input_path, workspace.path),
+                "input": _relative_input_file(output.input_path, workspace),
                 "output": _relative_file(output.output_path, workspace.path),
                 "source_format": output.source_format.value,
                 "target_format": output.target_format.value,
@@ -734,7 +763,7 @@ def _decode_result(
         if not isinstance(raw, dict):
             raise TypeError
         _require_keys(raw, {"item_id", "position", "input", "output", "source_format", "target_format"})
-        input_path = _resolve_relative_file(raw["input"], workspace.path, require_file=True)
+        input_path = _resolve_input_file(raw["input"], workspace)
         # Decode output paths lexically: missing/changed filesystem nodes are artifact
         # failures, whereas traversal and mismatched serialized paths remain metadata failures.
         output_path = _resolve_relative_file(
@@ -801,6 +830,24 @@ def _request_operation(request: object) -> str:
     if isinstance(request, BatchDocumentConvertRequest):
         return "office.to_pdf"
     raise ValueError
+
+
+def _resolve_input_file(value: object, workspace: BatchSessionWorkspace) -> Path:
+    candidate = _resolve_relative_file(value, workspace.path, require_file=False, lexical=True)
+    relative = candidate.relative_to(workspace.inputs_directory)
+    if not relative.parts:
+        raise ValueError
+    return candidate
+
+
+def _relative_input_file(path: Path, workspace: BatchSessionWorkspace) -> str:
+    try:
+        relative = path.relative_to(workspace.path).as_posix()
+        if _resolve_input_file(relative, workspace) != path:
+            raise ValueError
+        return relative
+    except (TypeError, ValueError) as error:
+        raise BatchPersistenceError("Batch input path metadata is unsafe.") from error
 
 
 def _relative_file(path: Path, root: Path) -> str:
@@ -887,6 +934,8 @@ def _validate_record(record: BatchSessionRecord, *, allow_legacy: bool = False) 
             raise ValueError
         for value in (record.request_json, record.batch_json):
             _load_object(value)
+        if record.input_manifest_json is not None:
+            _load_object(record.input_manifest_json)
         if record.result_json is not None:
             _load_object(record.result_json)
         if record.session_error_json is not None:
@@ -904,7 +953,7 @@ def _record_from_row(
             batch_id=row[0],
             phase=row[5], cancellation_requested=bool(row[6]), request_json=row[7],
             batch_json=row[8], result_json=row[9], session_error_json=row[10],
-            archive_available=bool(row[11]), updated_at=row[12],
+            archive_available=bool(row[11]), updated_at=row[12], input_manifest_json=row[13],
         )
         _validate_record(record, allow_legacy=allow_legacy)
         if row[6] not in {0, 1} or row[11] not in {0, 1}:

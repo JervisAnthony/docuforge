@@ -1,5 +1,6 @@
 """Process-local batch execution service lifecycle coverage."""
 
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Event
 from time import monotonic, sleep
@@ -18,6 +19,7 @@ from docuforge.batch import (
     BatchProcessingError,
     BatchStatus,
 )
+from docuforge.converters.image import ImageProcessingError
 from tests.batch.test_document import RecordingEngine
 from tests.batch.test_image_processing import write_image
 
@@ -44,6 +46,20 @@ def create_request(
     return workspace, BatchImageConvertRequest(
         tuple(items), workspace.output_directory, "jpg", workspace.batch_id
     )
+
+
+@contextmanager
+def fail_image_item(source: Path):
+    """Produce a retryable converter failure without changing accepted uploads."""
+    convert = image_module.convert_image_path
+
+    def run(request):
+        if request.input_path == source:
+            raise ImageProcessingError("Synthetic item failure.")
+        return convert(request)
+
+    with patch.object(image_module, "convert_image_path", side_effect=run):
+        yield
 
 
 def wait_for(
@@ -208,14 +224,12 @@ def test_packaging_and_terminal_processing_window_are_not_cancellable() -> None:
 def test_selective_recovery_increments_attempt_and_preserves_success(tmp_path: Path) -> None:
     runner = service()
     workspace, request = create_request(runner)
-    missing = request.items[0].input_path
-    missing.unlink()
-    grant = runner.create_session(request, workspace)  # type: ignore[arg-type]
-    first = wait_for(runner, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
+    with fail_image_item(request.items[0].input_path):
+        grant = runner.create_session(request, workspace)  # type: ignore[arg-type]
+        first = wait_for(runner, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)
     assert first.batch.status is BatchStatus.PARTIAL  # type: ignore[attr-defined]
     preserved = request.output_directory / "0002-two.jpg"
     before = preserved.read_bytes()
-    write_image(missing)
     retried = runner.recover(str(request.batch_id), grant.access_token)
     assert retried.attempt == 2
     final = wait_for(runner, str(request.batch_id), grant.access_token, BatchExecutionPhase.READY)

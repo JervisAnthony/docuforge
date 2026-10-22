@@ -14,8 +14,7 @@ from docuforge.api.batches import BatchExecutionPhase as Phase
 from docuforge.api.errors import ApiError
 from docuforge.batch import BatchCancellationToken, BatchStatus
 from tests.api.test_batch_deletion import _ready
-from tests.api.test_batch_service import create_request, service, wait_for
-from tests.batch.test_image_processing import write_image
+from tests.api.test_batch_service import create_request, fail_image_item, service, wait_for
 
 
 def queued(storage=None):
@@ -233,14 +232,13 @@ def test_selective_progress_failure_preserves_previous_coherent_result(tmp_path)
     runner = service(storage_directory=tmp_path)
     try:
         workspace, request = create_request(runner)
-        request.items[1].input_path.write_bytes(b"bad")
-        grant = runner.create_session(request, workspace)
-        batch_id, token = str(request.batch_id), grant.access_token
-        wait_for(runner, batch_id, token, Phase.READY)
+        with fail_image_item(request.items[1].input_path):
+            grant = runner.create_session(request, workspace)
+            batch_id, token = str(request.batch_id), grant.access_token
+            wait_for(runner, batch_id, token, Phase.READY)
         session = runner._sessions[batch_id]
         previous = session.result
         preserved = previous.outputs[0].output_path.read_bytes()
-        write_image(request.items[1].input_path)
         with patch.object(runner._executor, "submit"):
             runner.recover(batch_id, token)
         save = runner._repository.save

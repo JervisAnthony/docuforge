@@ -20,6 +20,12 @@ from docuforge.api.batch_access import (
     verify_access_token,
 )
 from docuforge.api.batch_artifacts import retained_outputs_are_valid
+from docuforge.api.batch_inputs import (
+    BatchInputFingerprint,
+    BatchInputIntegrityError,
+    capture_input_manifest,
+    inputs_are_valid,
+)
 from docuforge.api.batch_persistence import (
     BatchPersistenceError,
     BatchRetainedOutputIntegrityError,
@@ -27,6 +33,7 @@ from docuforge.api.batch_persistence import (
     BatchSessionWorkspace,
     archive_is_valid,
     cleanup_durable_workspace,
+    decode_input_manifest,
     decode_record,
     encode_record,
     prepare_durable_storage,
@@ -137,6 +144,7 @@ class _Session:
     archive_path: Path | None
     session_error: BatchSessionError | None
     updated_at: float
+    input_manifest: tuple[BatchInputFingerprint, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,8 +286,19 @@ class BatchExecutionService:
         batch = _initial_batch(request)
         if batch.id != workspace.batch_id:
             raise ValueError("batch request identity must match its workspace")
+        try:
+            input_manifest = capture_input_manifest(request, workspace.inputs_directory)
+        except BatchInputIntegrityError:
+            with self._lock:
+                self._admitted_batch_ids.discard(str(batch.id))
+            raise ApiError(
+                status_code=503,
+                code="batch_input_unavailable",
+                message="The uploaded batch inputs could not be verified. Try again later.",
+            ) from None
         access_token = generate_access_token()
         session = _Session(
+            input_manifest=input_manifest,
             access_token_hash=hash_access_token(access_token),
             request=request,
             workspace=workspace,
@@ -351,6 +370,7 @@ class BatchExecutionService:
                 candidate_cancellation.request_cancellation()
                 candidate = _Session(
                     access_token_hash=session.access_token_hash,
+                    input_manifest=session.input_manifest,
                     request=session.request,
                     workspace=session.workspace,
                     batch=session.batch,
@@ -401,11 +421,15 @@ class BatchExecutionService:
                     code="batch_download_active",
                     message="The batch cannot be recovered while a download is active.",
                 )
+            if not packaging_only:
+                self._require_inputs_locked(session)
             integrity_failed = (
                 (packaging_only or selective)
                 and session.result is not None
                 and not retained_outputs_are_valid(session.request, session.result)
             )
+            if packaging_only and integrity_failed:
+                self._require_inputs_locked(session)
             self._require_storage_locked()
             self._reserve_admission_locked(normalized_id)
             submitted = False
@@ -445,6 +469,7 @@ class BatchExecutionService:
                 updated_at = self._clock()
                 candidate = _Session(
                     access_token_hash=session.access_token_hash,
+                    input_manifest=session.input_manifest,
                     request=session.request,
                     workspace=session.workspace,
                     # A selective retry's preserved result belongs to the previous terminal
@@ -664,6 +689,8 @@ class BatchExecutionService:
             result = session.result if packaging_only else None
         try:
             with self._lock:
+                if not packaging_only:
+                    self._require_inputs_locked(session)
                 self._require_storage_locked()
                 candidate = replace(
                     session,
@@ -743,7 +770,9 @@ class BatchExecutionService:
                     session_error = BatchSessionError(
                         "batch_execution_failed", "The batch could not be completed."
                     )
-                if isinstance(error, ApiError) and error.code in _STORAGE_ERROR_CODES:
+                if isinstance(error, ApiError) and error.code in _STORAGE_ERROR_CODES | {
+                    "batch_input_integrity_failed"
+                }:
                     session_error = BatchSessionError(error.code, error.message)
                 candidate = replace(
                     session,
@@ -836,6 +865,16 @@ class BatchExecutionService:
                 message="The batch session was not found.",
             )
         return session
+
+    def _require_inputs_locked(self, session: _Session) -> None:
+        if not inputs_are_valid(
+            session.request, session.input_manifest, session.workspace.inputs_directory
+        ):
+            raise ApiError(
+                status_code=409,
+                code="batch_input_integrity_failed",
+                message="The original batch inputs could not be verified.",
+            )
 
     def _require_storage_locked(self, write_bytes: int = 0) -> None:
         if self._storage_root is None:
@@ -968,6 +1007,7 @@ class BatchExecutionService:
         record = encode_record(
             request=session.request,
             access_token_hash=session.access_token_hash,
+            input_manifest=session.input_manifest,
             batch=session.batch,
             result=session.result,
             attempt=session.attempt,
@@ -1032,6 +1072,7 @@ class BatchExecutionService:
                     "Stored batch session could not be restored."
                 ) from decode_error
             session = _Session(
+                input_manifest=decode_input_manifest(record, request),
                 access_token_hash=record.access_token_hash,
                 request=request,  # type: ignore[arg-type]
                 workspace=workspace,

@@ -4,6 +4,7 @@ DocuForge is a privacy-conscious PDF, image, Office, and OCR toolkit with a brow
 
 Retained converted outputs are revalidated before reuse; untrusted generated artifacts are reset before a full recovery from the original uploads.
 Worker-owned batch checkpoints are persisted before publication to live API readers; restart remains governed by the last successful SQLite commit.
+New batches retain private SHA-256 upload fingerprints and refuse conversion from changed originals; completed ZIP downloads remain independent of original-file availability.
 
 
 The MVP is intentionally focused: process common document and image tasks without accounts, persistent document storage, or browser-side document parsing.

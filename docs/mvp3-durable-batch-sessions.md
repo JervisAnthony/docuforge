@@ -94,7 +94,7 @@ processing, leasing, heartbeats, fencing, or cross-process cancellation.
 See [Durable storage ownership](mvp3-durable-storage-ownership.md) for lock lifecycle and operator
 guidance.
 
-Item-level `batch_output_limit_exceeded` failures persist and recover normally under schema v2.
+Item-level `batch_output_limit_exceeded` failures persist and recover normally under schema v3.
 [Published output budget recovery](mvp3-batch-output-budget.md) measures preserved files again and
 uses the current deployment limit, without persisting budgets or byte totals.
 
@@ -106,6 +106,8 @@ Structurally valid sessions whose retained converted outputs are corrupt restore
 recoverable `ERROR / batch_output_integrity_failed`, with result and archive references
 durably discarded and the original terminal timestamp preserved. Structural SQLite,
 JSON, request, result, and domain corruption remains startup-fatal. See
-[output integrity](mvp3-batch-output-integrity.md); schema version 2 is unchanged.
+[output integrity](mvp3-batch-output-integrity.md); schema version 3 retains these restoration rules.
 
-Worker PROCESSING, progress, PACKAGING, READY, and normal ERROR checkpoints now save before updating live state. If SQLite also rejects the ERROR save, a safe memory-only persistence error releases admission; restart uses the last committed row. See [worker state publication](mvp3-worker-state-publication.md). Schema remains v2.
+Worker PROCESSING, progress, PACKAGING, READY, and normal ERROR checkpoints now save before updating live state. If SQLite also rejects the ERROR save, a safe memory-only persistence error releases admission; restart uses the last committed row. See [worker state publication](mvp3-worker-state-publication.md). Schema v3 adds the private original-upload manifest.
+
+Schema v2 migrates transactionally to v3, adding nullable `input_manifest_json`; historical rows remain NULL without invented hashes. New sessions persist ordered accepted-byte SHA-256 fingerprints. Version-1 capability cleanup is retained. Safe missing-input paths restore valid existing results/ZIPs; conversion requires verified originals. See [input integrity](mvp3-batch-input-integrity.md).
