@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import type { ApiHealth } from './api/types'
+import { useCallback, useState } from 'react'
+import type { ApiHealth, BatchSessionHandle } from './api/types'
 import type { ApiClient } from './api/client'
 import { BatchToolWorkspace } from './batch/BatchToolWorkspace'
 import { AppHeader } from './components/AppHeader'
@@ -11,7 +11,7 @@ import { OcrToolWorkspace } from './ocr/OcrToolWorkspace'
 import { PdfToolWorkspace } from './pdf/PdfToolWorkspace'
 import type { PdfRequestClient } from './pdf/types'
 import { toolById, toolsForCategory } from './tools/catalog'
-import type { ToolId } from './tools/types'
+import type { ToolId, BatchToolId } from './tools/types'
 import type { MultipartRequestClient } from './workflows/useSubmission'
 
 interface AppProps {
@@ -25,6 +25,18 @@ interface AppProps {
 
 function App({ checkHealth, pdfClient, imageClient, officeClient, ocrClient, batchClient }: AppProps) {
   const [selectedTool, setSelectedTool] = useState<ToolId | null>(null)
+  const [batchSessions, setBatchSessions] = useState<Partial<Record<BatchToolId, BatchSessionHandle>>>({})
+  const changeSession = useCallback((toolId: BatchToolId, handle: BatchSessionHandle) => {
+    setBatchSessions((sessions) => ({ ...sessions, [toolId]: handle }))
+  }, [])
+  const clearSession = useCallback((toolId: BatchToolId, batchId: string) => {
+    setBatchSessions((sessions) => {
+      if (sessions[toolId]?.snapshot.id !== batchId) return sessions
+      const next = { ...sessions }
+      delete next[toolId]
+      return next
+    })
+  }, [])
   const selectedDefinition = selectedTool ? toolById(selectedTool) : null
 
   return (
@@ -33,6 +45,10 @@ function App({ checkHealth, pdfClient, imageClient, officeClient, ocrClient, bat
       <main id="main-content">
         {selectedDefinition?.category === 'batch' ? (
           <BatchToolWorkspace
+            key={selectedDefinition.id}
+            session={batchSessions[selectedDefinition.id]}
+            onSessionChange={changeSession}
+            onSessionClear={clearSession}
             toolId={selectedDefinition.id}
             onBack={() => setSelectedTool(null)}
             client={batchClient}
