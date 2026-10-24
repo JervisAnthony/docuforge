@@ -260,3 +260,5 @@ Licensed under the MIT License. See [LICENSE](LICENSE).
 Accepted batch downloads pin their archive through response completion so deletion, TTL cleanup and shutdown cannot truncate an in-flight stream.
 
 Retained batch ZIPs are revalidated before new downloads are pinned and streamed.
+
+Batch tools retain private sessions across tool navigation in application memory. After reload, explicitly paste a previously copied private recovery key; credentials are never automatically stored. See [Browser batch continuity](docs/mvp3-browser-batch-continuity.md).

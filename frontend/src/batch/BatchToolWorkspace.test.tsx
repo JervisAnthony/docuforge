@@ -2,7 +2,17 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ApiClient } from '../api/client'
 import type { BatchSnapshot } from '../api/types'
-import { BatchToolWorkspace } from './BatchToolWorkspace'
+import { useCallback, useState } from 'react'
+import type { ComponentProps } from 'react'
+import type { BatchSessionHandle } from '../api/types'
+import { BatchToolWorkspace as Workspace } from './BatchToolWorkspace'
+
+function BatchToolWorkspace(props: Omit<ComponentProps<typeof Workspace>, 'session' | 'onSessionChange' | 'onSessionClear'>) {
+  const [session, setSession] = useState<BatchSessionHandle>()
+  const change = useCallback((_: unknown, handle: BatchSessionHandle) => setSession(handle), [])
+  const clear = useCallback(() => setSession(undefined), [])
+  return <Workspace {...props} session={session} onSessionChange={change} onSessionClear={clear} />
+}
 
 function snapshot(overrides: Partial<BatchSnapshot> = {}): BatchSnapshot {
   return {
@@ -186,7 +196,7 @@ describe('batch workspace', () => {
     await act(async () => Promise.resolve())
     await act(async () => { await vi.advanceTimersByTimeAsync(800) })
     expect(screen.getAllByText('50%')).toHaveLength(2)
-    expect(screen.getByRole('alert')).toHaveTextContent('Status could not be refreshed.')
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not reconnect to this batch. Retry status.')
     fireEvent.click(screen.getByRole('button', { name: 'Retry status' }))
     await act(async () => Promise.resolve())
     expect(api.getBatchStatus).toHaveBeenLastCalledWith('batch-1', 'private-token')
