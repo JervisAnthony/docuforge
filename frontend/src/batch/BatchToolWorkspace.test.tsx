@@ -1,8 +1,20 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ApiClient } from '../api/client'
+import { ApiClientError } from '../api/client'
+import { encodeRecoveryKey } from './recoveryKey'
 import type { BatchSnapshot } from '../api/types'
-import { BatchToolWorkspace } from './BatchToolWorkspace'
+import { useCallback, useState } from 'react'
+import type { ComponentProps } from 'react'
+import type { BatchSessionHandle } from '../api/types'
+import { BatchToolWorkspace as Workspace } from './BatchToolWorkspace'
+
+function BatchToolWorkspace(props: Omit<ComponentProps<typeof Workspace>, 'session' | 'onSessionChange' | 'onSessionClear'>) {
+  const [session, setSession] = useState<BatchSessionHandle>()
+  const change = useCallback((_: unknown, handle: BatchSessionHandle) => setSession(handle), [])
+  const clear = useCallback(() => setSession(undefined), [])
+  return <Workspace {...props} session={session} onSessionChange={change} onSessionClear={clear} />
+}
 
 function snapshot(overrides: Partial<BatchSnapshot> = {}): BatchSnapshot {
   return {
@@ -51,6 +63,104 @@ function deferred<T>() {
 afterEach(() => vi.useRealTimers())
 
 describe('batch workspace', () => {
+  it.each([
+    ['batch_capacity_exceeded', 'Too many batches are active. Try again later.'],
+    ['batch_storage_pressure', 'Batch storage is full. Try again later.'],
+  ])('shows the safe creation reason for %s', async (code, message) => {
+    const api = client()
+    vi.mocked(api.createBatch).mockRejectedValue(new ApiClientError(message, { kind: 'http', status: 503, code }))
+    render(<BatchToolWorkspace toolId="batch-image-convert" onBack={vi.fn()} client={api} />)
+    fireEvent.change(screen.getByLabelText('Image files'), { target: { files: [new File(['a'], 'one.png')] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Start batch' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(message)
+    expect(screen.getByRole('button', { name: 'Start batch' })).toBeEnabled()
+  })
+
+  it.each([
+    ['cancelBatch', 'Cancel', 'Batch cancellation could not be persisted.'],
+    ['recoverBatch', 'Retry failed/cancelled items', 'Original batch inputs failed integrity verification.'],
+    ['downloadBatch', 'Download ZIP', 'The batch ZIP could not be packaged.'],
+  ] as const)('shows the safe %s error and retains the session', async (method, label, message) => {
+    const api = client(snapshot({ phase: 'ready', can_recover: true, can_download: true }))
+    const code = method === 'recoverBatch' ? 'batch_input_integrity_failed'
+      : method === 'downloadBatch' ? 'batch_packaging_failed' : 'batch_storage_pressure'
+    vi.mocked(api[method]).mockRejectedValue(new ApiClientError(message, { kind: 'http', status: 409, code }))
+    render(<BatchToolWorkspace toolId="batch-image-convert" onBack={vi.fn()} client={api} />)
+    fireEvent.change(screen.getByLabelText('Image files'), { target: { files: [new File(['a'], 'one.png')] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Start batch' }))
+    fireEvent.click(await screen.findByRole('button', { name: label }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(message)
+    expect(api[method]).toHaveBeenCalledWith('batch-1', 'private-token')
+    expect(screen.getByRole('region', { name: 'Batch status' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Copy recovery key' })).toBeEnabled()
+    expect(screen.getByLabelText('Image files')).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry status' }))
+    await waitFor(() => expect(api.getBatchStatus).toHaveBeenCalledWith('batch-1', 'private-token'))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  })
+
+  it.each(['createBatch', 'cancelBatch', 'recoverBatch', 'downloadBatch'] as const)(
+    'hides private diagnostics from JavaScript and network errors in %s', async (method) => {
+      const api = client(snapshot({ phase: 'ready', can_recover: true, can_download: true }))
+      const privateMessage = 'Request failed with capability private-token at /private/uploads'
+      vi.mocked(api[method])
+        .mockRejectedValueOnce(new Error(privateMessage))
+        .mockRejectedValueOnce(new ApiClientError(privateMessage, { kind: 'network' }))
+      render(<BatchToolWorkspace toolId="batch-image-convert" onBack={vi.fn()} client={api} />)
+      fireEvent.change(screen.getByLabelText('Image files'), { target: { files: [new File(['a'], 'one.png')] } })
+      const label = { createBatch: 'Start batch', cancelBatch: 'Cancel', recoverBatch: 'Retry failed/cancelled items', downloadBatch: 'Download ZIP' }[method]
+      if (method !== 'createBatch') {
+        fireEvent.click(screen.getByRole('button', { name: 'Start batch' }))
+        await screen.findByRole('button', { name: label })
+      }
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        fireEvent.click(screen.getByRole('button', { name: label }))
+        expect(await screen.findByRole('alert')).toHaveTextContent(method === 'createBatch'
+          ? 'The batch could not be started.' : method === 'downloadBatch'
+            ? 'The ZIP could not be downloaded.' : 'The batch request could not be completed.')
+        expect(document.body).not.toHaveTextContent('private-token')
+        expect(document.body).not.toHaveTextContent('/private/uploads')
+      }
+      expect(api[method]).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it.each([
+    ['cancelBatch', 'Cancel'],
+    ['recoverBatch', 'Retry failed/cancelled items'],
+    ['downloadBatch', 'Download ZIP'],
+  ] as const)('clears a stale session after a private 404 from %s', async (method, label) => {
+    const api = client(snapshot({ phase: 'ready', can_recover: true, can_download: true }))
+    vi.mocked(api[method]).mockRejectedValue(new ApiClientError('private-token', {
+      kind: 'http', status: 404, code: 'batch_not_found',
+    }))
+    render(<BatchToolWorkspace toolId="batch-image-convert" onBack={vi.fn()} client={api} />)
+    fireEvent.change(screen.getByLabelText('Image files'), { target: { files: [new File(['a'], 'one.png')] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Start batch' }))
+    fireEvent.click(await screen.findByRole('button', { name: label }))
+    expect(await screen.findByRole('status')).toHaveTextContent('This batch is no longer available. It may have expired or been deleted.')
+    expect(screen.queryByRole('region', { name: 'Batch status' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start batch' })).toBeEnabled()
+    expect(document.body).not.toHaveTextContent('private-token')
+  })
+
+  it('keeps manual recovery-key 404 errors generic and does not attach a session', async () => {
+    const api = client()
+    vi.mocked(api.getBatchStatus).mockRejectedValue(new ApiClientError('private-token', {
+      kind: 'http', status: 404, code: 'batch_not_found',
+    }))
+    render(<BatchToolWorkspace toolId="batch-image-convert" onBack={vi.fn()} client={api} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Resume a batch' }))
+    const batchId = '12345678-1234-4234-8234-123456789abc'
+    fireEvent.change(screen.getByLabelText('Recovery key'), { target: { value: encodeRecoveryKey({ snapshot: snapshot({ id: batchId }), accessToken: 'private-token' }) } })
+    fireEvent.click(screen.getByRole('button', { name: 'Resume' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('This batch is unavailable or the recovery key is invalid.')
+    expect(api.getBatchStatus).toHaveBeenCalledWith(batchId, 'private-token')
+    expect(screen.queryByRole('region', { name: 'Batch status' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/may have expired or been deleted/)).not.toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent('private-token')
+  })
+
   it('confirms terminal deletion, clears session state, and keeps the token hidden', async () => {
     const api = client(snapshot({ phase: 'ready', status: 'completed', can_cancel: false }))
     render(<BatchToolWorkspace toolId="batch-image-convert" onBack={vi.fn()} client={api} />)
@@ -186,7 +296,7 @@ describe('batch workspace', () => {
     await act(async () => Promise.resolve())
     await act(async () => { await vi.advanceTimersByTimeAsync(800) })
     expect(screen.getAllByText('50%')).toHaveLength(2)
-    expect(screen.getByRole('alert')).toHaveTextContent('Status could not be refreshed.')
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not reconnect to this batch. Retry status.')
     fireEvent.click(screen.getByRole('button', { name: 'Retry status' }))
     await act(async () => Promise.resolve())
     expect(api.getBatchStatus).toHaveBeenLastCalledWith('batch-1', 'private-token')
