@@ -153,3 +153,5 @@ generic Job lifecycle remains unchanged.
 4. Commit 54 — progress/status UX, cancellation, and error recovery — complete/current.
 
 The current MVP2 batch roadmap is complete.
+
+Batch tools retain private sessions across tool navigation in application memory. After reload, explicitly paste a previously copied private recovery key; credentials are never automatically stored. See [Browser batch continuity](mvp3-browser-batch-continuity.md).
