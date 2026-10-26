@@ -16,6 +16,7 @@ def test_batch_persistence_smoke_runs_real_restart_cycle() -> None:
         "batch-output-integrity",
         "batch-worker-publication",
         "batch-input-integrity",
+        "batch-archive-source-pinning",
     )
 
 
@@ -36,6 +37,7 @@ def test_batch_persistence_smoke_cli_success(monkeypatch, capsys) -> None:
             "batch-output-integrity",
             "batch-worker-publication",
             "batch-input-integrity",
+            "batch-archive-source-pinning",
         ),
     )
     assert batch_persistence_smoke.main() == 0
@@ -52,7 +54,8 @@ def test_batch_persistence_smoke_cli_success(monkeypatch, capsys) -> None:
         "PASS batch-output-integrity",
         "PASS batch-worker-publication",
         "PASS batch-input-integrity",
-        "Durable batch persistence smoke passed: 12 checks",
+        "PASS batch-archive-source-pinning",
+        "Durable batch persistence smoke passed: 13 checks",
     ]
 
 

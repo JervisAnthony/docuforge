@@ -46,3 +46,9 @@ The durable smoke must also report `PASS batch-output-integrity`: corrupt a reta
 Require `PASS batch-worker-publication` for a controlled worker READY-save failure with no false success and successful recovery. Together with existing runtime/batch checks, the production image reports thirteen PASS markers. See [worker state publication](mvp3-worker-state-publication.md).
 
 Require `PASS batch-input-integrity`: durable restart, refusal of same-length altered uploads without state/reset/attempt mutation, exact-byte restoration, successful recovery, and normal deletion. The production image now reports fourteen PASS markers. See [input integrity](mvp3-batch-input-integrity.md).
+
+Require `PASS batch-archive-source-pinning`: package stable synthetic outputs,
+verify bytes and CRC, inject a regular-file replacement before descriptor opening,
+require safe rejection, preserve the previous ZIP and external sentinel, and clean
+staging. The production image now reports fifteen PASS markers (two runtime engine
+checks plus thirteen batch checks). See [safe ZIP source pinning](mvp3-batch-archive-source-integrity.md).

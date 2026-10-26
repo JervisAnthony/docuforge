@@ -15,6 +15,77 @@ from tests.api.test_batch_deletion import _ready
 from tests.api.test_batch_service import wait_for
 
 
+@pytest.mark.parametrize("durable", [False, True])
+@pytest.mark.parametrize("packaging_only", [False, True])
+def test_source_replacement_fails_safely_then_recovers_without_conversion(
+    tmp_path, durable, packaging_only,
+):
+    from docuforge.api import batches
+    from docuforge.batch import archive as packaging
+    from tests.api.test_batch_service import create_request, service
+
+    runner = service(**({"storage_directory": tmp_path / "storage"} if durable else {}))
+    workspace, request = create_request(runner, ("one.png",))
+    streaming = packaging._stream_archive_member
+    replaced = []
+
+    def replace_source(archive, source, name):
+        # A same-byte regular-file replacement passes structural output trust
+        # but must fail this packaging transaction's original identity snapshot.
+        data = source.path.read_bytes()
+        source.path.rename(source.path.with_suffix(".original"))
+        source.path.write_bytes(data)
+        replaced.append(source.path)
+        return streaming(archive, source, name)
+
+    try:
+        if packaging_only:
+            grant = runner.create_session(request, workspace)
+            batch_id, token = str(request.batch_id), grant.access_token
+            wait_for(runner, batch_id, token, BatchExecutionPhase.READY)
+            workspace.archive_path.write_bytes(b"invalid")
+            with pytest.raises(ApiError):
+                runner.acquire_download(batch_id, token)
+            with (
+                patch.object(packaging, "_stream_archive_member", side_effect=replace_source),
+                patch.object(batches, "batch_convert_images", side_effect=AssertionError("rerun")),
+            ):
+                runner.recover(batch_id, token)
+                failed = wait_for(runner, batch_id, token, BatchExecutionPhase.ERROR)
+        else:
+            with patch.object(packaging, "_stream_archive_member", side_effect=replace_source):
+                grant = runner.create_session(request, workspace)
+                batch_id, token = str(request.batch_id), grant.access_token
+                failed = wait_for(runner, batch_id, token, BatchExecutionPhase.ERROR)
+        assert replaced
+        assert failed.session_error == BatchSessionError(
+            "batch_packaging_failed", "The batch outputs could not be packaged.",
+        )
+        assert failed.can_recover and not failed.can_download
+        assert runner._sessions[batch_id].archive_path is None
+        assert not workspace.archive_path.exists()
+        assert not list(workspace.path.rglob(".docuforge-batch-archive-*"))
+        if durable:
+            row = runner._repository.get(batch_id)
+            assert row.phase == "error" and not row.archive_available
+        with pytest.raises(ApiError):
+            runner.acquire_download(batch_id, token)
+        retained = runner._sessions[batch_id].result
+        for item in request.items:
+            item.input_path.unlink()  # Packaging-only retry does not rehash inputs.
+        with patch.object(batches, "batch_convert_images", side_effect=AssertionError("rerun")):
+            runner.recover(batch_id, token)
+            ready = wait_for(runner, batch_id, token, BatchExecutionPhase.READY)
+        assert ready.can_download
+        assert runner._sessions[batch_id].result is retained
+        with ZipFile(runner.download_path(batch_id, token)) as archive:
+            assert archive.testzip() is None
+            assert archive.namelist() == [retained.outputs[0].output_path.name]
+            assert archive.read(archive.namelist()[0]) == retained.outputs[0].output_path.read_bytes()
+    finally:
+        runner.shutdown()
+
+
 def mutate(workspace, session, kind, tmp_path):
     path = workspace.archive_path
     names = [o.output_path.name for o in session.result.outputs]
