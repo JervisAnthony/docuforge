@@ -1,5 +1,9 @@
 # Retained converted output integrity
 
+[Safe ZIP source pinning](mvp3-batch-archive-source-integrity.md) additionally checks
+opened descriptor identity and observable source stability during packaging.
+It complements structural output validation without adding output hashes.
+
 Retained outputs are validated before selective or packaging-only recovery reuses a
 previous result, and when a durable session restores that result. Status polling
 does not scan outputs. The shared dispatch helper uses the existing image and PDF

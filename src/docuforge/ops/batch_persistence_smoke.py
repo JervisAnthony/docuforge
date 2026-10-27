@@ -16,7 +16,13 @@ from docuforge.api.batch_persistence import BatchPersistenceError
 from docuforge.api.batch_storage_lock import BatchStorageOwnershipError
 from docuforge.api.batches import BatchExecutionPhase, BatchExecutionService
 from docuforge.api.errors import ApiError
-from docuforge.batch import BatchImageConvertRequest, BatchImageInput
+from docuforge.batch import (
+    BatchImageConvertRequest,
+    BatchImageInput,
+    BatchProcessingError,
+    batch_convert_images,
+    package_batch_outputs,
+)
 from docuforge.converters.office import LibreOfficeEngine
 
 
@@ -173,6 +179,7 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
             _verify_output_budget(storage)
             _verify_worker_publication(storage)
             _verify_input_integrity(storage)
+            _verify_archive_source_pinning(storage)
     except BatchPersistenceSmokeError:
         raise
     except (OSError, RuntimeError, ValueError) as error:
@@ -190,7 +197,59 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
         "batch-output-integrity",
         "batch-worker-publication",
         "batch-input-integrity",
+        "batch-archive-source-pinning",
     )
+
+
+def _verify_archive_source_pinning(storage: Path) -> None:
+    """Reject a controlled source swap, retaining a previously valid synthetic ZIP."""
+    from docuforge.batch import archive as packaging
+
+    with tempfile.TemporaryDirectory(prefix="archive-source-smoke-", dir=storage) as directory:
+        root = Path(directory)
+        source = root / "smoke.png"
+        Image.new("RGB", (8, 8), "blue").save(source)
+        outputs = root / "outputs"
+        outputs.mkdir()
+        result = batch_convert_images(BatchImageConvertRequest(
+            (BatchImageInput(source),), outputs, "jpg",
+        ))
+        destination = root / "result.zip"
+        package_batch_outputs(result, destination)
+        previous = destination.read_bytes()
+        output = result.outputs[0].output_path
+        with ZipFile(destination) as archive:
+            if (archive.namelist() != [output.name] or archive.testzip() is not None
+                    or archive.read(output.name) != output.read_bytes()):
+                raise BatchPersistenceSmokeError("source pinning stable ZIP was invalid")
+        sentinel = root / "external-sentinel"
+        sentinel.write_bytes(b"SYNTHETIC EXTERNAL SENTINEL")
+        opening = packaging._open_verified_archive_source
+        injected = []
+
+        def replace_before_open(reference):
+            output.rename(outputs / "original")
+            # A regular replacement is portable on Windows and POSIX and checks
+            # descriptor identity without needing privileged symlink creation.
+            output.write_bytes(sentinel.read_bytes())
+            injected.append(True)
+            return opening(reference)
+
+        with patch.object(packaging, "_open_verified_archive_source", replace_before_open):
+            try:
+                package_batch_outputs(result, destination)
+            except BatchProcessingError as error:
+                if str(error) != "Unable to package the batch outputs.":
+                    raise BatchPersistenceSmokeError("source pinning failure was unsafe") from None
+            else:
+                raise BatchPersistenceSmokeError("replaced archive source was accepted")
+        if (not injected or destination.read_bytes() != previous
+                or sentinel.read_bytes() != b"SYNTHETIC EXTERNAL SENTINEL"
+                or list(root.glob(".docuforge-batch-archive-*"))):
+            raise BatchPersistenceSmokeError("source pinning did not preserve the prior ZIP")
+        with ZipFile(destination) as archive:
+            if archive.testzip() is not None or archive.read(output.name) == sentinel.read_bytes():
+                raise BatchPersistenceSmokeError("untrusted source bytes were published")
 
 
 def _verify_input_integrity(storage: Path) -> None:

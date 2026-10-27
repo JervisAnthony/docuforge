@@ -1,5 +1,9 @@
 # Retained batch archive integrity
 
+New ZIPs use [safe source pinning](mvp3-batch-archive-source-integrity.md): bounded
+descriptor reads and observable source-mutation checks before atomic publication.
+This packaging boundary does not add source rescanning to archive downloads.
+
 Archive integrity and [retained converted output integrity](mvp3-batch-output-integrity.md)
 are separate boundaries. Archive download validation does not reread all source
 output files; converted outputs are revalidated before recovery reuse and restart.
