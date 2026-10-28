@@ -261,6 +261,9 @@ Accepted batch downloads pin their archive through response completion so deleti
 
 Retained batch ZIPs are revalidated before new downloads are pinned and streamed.
 
+Batch downloads validate ZIP structure and CRC through the same owned descriptor
+used for bounded full/range HTTP streaming. See [Verified ZIP downloads](docs/mvp3-batch-verified-downloads.md).
+
 New ZIPs stream from verified source descriptors with bounded reads and observable
 mutation checks before atomic publication. See [Safe ZIP source pinning](docs/mvp3-batch-archive-source-integrity.md).
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
@@ -10,8 +11,9 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from shutil import disk_usage
-from threading import Condition, Event, RLock, Thread
+from threading import Condition, Event, Lock, RLock, Thread
 from time import time
+from typing import BinaryIO
 from uuid import uuid4
 
 from docuforge.api.batch_access import (
@@ -27,10 +29,12 @@ from docuforge.api.batch_inputs import (
     inputs_are_valid,
 )
 from docuforge.api.batch_persistence import (
+    BatchArchiveValidationError,
     BatchPersistenceError,
     BatchRetainedOutputIntegrityError,
     BatchSessionRepository,
     BatchSessionWorkspace,
+    _open_validated_download_archive,
     archive_is_valid,
     cleanup_durable_workspace,
     decode_input_manifest,
@@ -147,15 +151,46 @@ class _Session:
     input_manifest: tuple[BatchInputFingerprint, ...] | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class BatchDownloadHandle:
     """An accepted archive read protected until its idempotent release."""
 
     path: Path
+    reader: BinaryIO = field(repr=False)
+    stat_result: os.stat_result = field(repr=False)
     _release: Callable[[], None] = field(repr=False)
+    _released: bool = field(default=False, init=False, repr=False)
+    _release_lock: object = field(default_factory=Lock, init=False, repr=False)
+
+    @property
+    def size_bytes(self) -> int:
+        return self.stat_result.st_size
+
+    def read_chunk(self, offset: int, size: int) -> bytes:
+        """Per-handle cursor; range reads never reopen the informational path."""
+        with self._release_lock:
+            try:
+                if self._released:
+                    raise OSError
+                self.reader.seek(offset)
+                chunk = self.reader.read(size)
+                if not chunk and size:
+                    raise OSError
+                return chunk
+            except OSError:
+                raise OSError("Unable to read the batch archive.") from None
 
     def release(self) -> None:
-        self._release()
+        with self._release_lock:
+            if self._released:
+                return
+            self._released = True
+            try:
+                self.reader.close()
+            except OSError:
+                _LOGGER.warning("Batch download reader cleanup failed.")
+            finally:
+                self._release()
 
 
 class BatchExecutionService:
@@ -520,14 +555,30 @@ class BatchExecutionService:
             if self._shutdown:
                 raise RuntimeError("batch execution service is shut down")
             session = self._get_authorized_locked(batch_id, access_token)
-            path = self._validated_download_path_locked(session)
+            path = self._download_candidate_path_locked(session)
+            if path is None or session.result is None:
+                self._unavailable_download_locked(session)
+            try:
+                reader, node = _open_validated_download_archive(path, session.result, session.workspace)
+            except BatchArchiveValidationError:
+                self._unavailable_download_locked(session)
             normalized_id = str(batch_id)
             pin_id = uuid4().hex
-            handle = BatchDownloadHandle(
-                path, lambda: self._release_download(normalized_id, pin_id)
-            )
-            self._active_downloads.setdefault(normalized_id, set()).add(pin_id)
-            return handle
+            accepted = False
+            try:
+                handle = BatchDownloadHandle(
+                    path, reader, node, lambda: self._release_download(normalized_id, pin_id)
+                )
+                self._active_downloads.setdefault(normalized_id, set()).add(pin_id)
+                accepted = True
+                return handle
+            finally:
+                if not accepted:
+                    try:
+                        with suppress(OSError):
+                            reader.close()
+                    finally:
+                        self._release_download(normalized_id, pin_id)
 
     def _release_download(self, batch_id: str, pin_id: str) -> None:
         with self._downloads_drained:
@@ -552,6 +603,13 @@ class BatchExecutionService:
             return self._validated_download_path_locked(session)
 
     def _validated_download_path_locked(self, session: _Session) -> Path:
+        path = self._download_candidate_path_locked(session)
+        if (path is not None and session.result is not None
+                and archive_is_valid(path, session.result, session.workspace)):
+            return path
+        self._unavailable_download_locked(session)
+
+    def _download_candidate_path_locked(self, session: _Session) -> Path | None:
         if session.phase in {
             BatchExecutionPhase.QUEUED,
             BatchExecutionPhase.PROCESSING,
@@ -569,14 +627,9 @@ class BatchExecutionService:
                 code="batch_has_no_outputs",
                 message="The batch has no successful outputs.",
             )
-        path = session.archive_path
-        if (
-            session.result is not None
-            and session.result.outputs
-            and path is not None
-            and archive_is_valid(path, session.result, session.workspace)
-        ):
-            return path
+        return session.archive_path if session.result is not None else None
+
+    def _unavailable_download_locked(self, session: _Session) -> None:
         candidate = replace(session, archive_path=None)
         if session.phase is BatchExecutionPhase.READY:
             candidate.phase = BatchExecutionPhase.ERROR
@@ -852,12 +905,16 @@ class BatchExecutionService:
     def _get_authorized_locked(
         self, batch_id: str, access_token: object, *, allow_deleting: bool = False
     ) -> _Session:
-        self._expire_locked()
         session = self._sessions.get(str(batch_id))
+        # Authorization must precede even expiry cleanup and its persistence/filesystem writes.
+        if session is not None and verify_access_token(access_token, session.access_token_hash):
+            self._expire_locked()
+            session = self._sessions.get(str(batch_id))
+        else:
+            session = None
         if (
             session is None
             or (session.phase is BatchExecutionPhase.DELETING and not allow_deleting)
-            or not verify_access_token(access_token, session.access_token_hash)
         ):
             raise ApiError(
                 status_code=404,

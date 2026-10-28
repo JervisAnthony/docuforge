@@ -1,9 +1,13 @@
 """Batch creation, polling, cancellation, recovery, and download routes."""
 
+from secrets import token_hex
 from typing import Annotated
 
+import anyio
 from fastapi import APIRouter, File, Form, Header, Response, UploadFile
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import MutableHeaders
 from starlette.types import Receive, Scope, Send
 
 from docuforge.api.batch_access import BATCH_TOKEN_HEADER
@@ -44,17 +48,94 @@ _OFFICE_EXTENSIONS = frozenset({".docx", ".pptx", ".xlsx"})
 
 
 class _PinnedFileResponse(FileResponse):
-    """Retain the accepted archive through all ASGI response exit paths."""
+    """Reuse framework range semantics, replacing every pathname-reading branch."""
+
+    chunk_size = 1024 * 1024
 
     def __init__(self, handle: BatchDownloadHandle, **kwargs) -> None:
         self._download_handle = handle
-        super().__init__(handle.path, **kwargs)
+        super().__init__(handle.path, stat_result=handle.stat_result, **kwargs)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:
-            await super().__call__(scope, receive, send)
+            version = tuple(map(int, scope.get("asgi", {}).get("spec_version", "2.0").split(".")))
+            if version >= (2, 4):
+                # ASGI 2.4 signals disconnect through send raising OSError.
+                await super().__call__(scope, receive, send)
+            else:
+                async with anyio.create_task_group() as tasks:
+                    async def stream():
+                        await super(_PinnedFileResponse, self).__call__(scope, receive, send)
+                        tasks.cancel_scope.cancel()
+
+                    tasks.start_soon(stream)
+                    while (await receive())["type"] != "http.disconnect":
+                        pass
+                    tasks.cancel_scope.cancel()
         finally:
             self._download_handle.release()
+
+    async def _read_chunk(self, start: int, end: int) -> bytes:
+        return await run_in_threadpool(
+            self._download_handle.read_chunk, start, min(self.chunk_size, end - start),
+        )
+
+    async def _send_bytes(
+        self, send: Send, start: int, end: int, *, more_body: bool, first: bytes | None = None,
+    ) -> None:
+        while start < end:
+            chunk = first if first is not None else await self._read_chunk(start, end)
+            first = None
+            start += len(chunk)
+            await send({"type": "http.response.body", "body": chunk,
+                        "more_body": start < end or more_body})
+
+    async def _handle_simple(self, send: Send, send_header_only: bool, send_pathsend: bool) -> None:
+        # Deliberately ignore pathsend: the server must not reopen self.path.
+        end = self._download_handle.size_bytes
+        first = None if send_header_only else await self._read_chunk(0, end)
+        await send({"type": "http.response.start", "status": self.status_code,
+                    "headers": self.raw_headers})
+        if send_header_only:
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+        else:
+            await self._send_bytes(send, 0, end, more_body=False, first=first)
+
+    async def _handle_single_range(
+        self, send: Send, start: int, end: int, file_size: int, send_header_only: bool,
+    ) -> None:
+        headers = MutableHeaders(raw=list(self.raw_headers))
+        headers["content-range"] = f"bytes {start}-{end - 1}/{file_size}"
+        headers["content-length"] = str(end - start)
+        first = None if send_header_only else await self._read_chunk(start, end)
+        await send({"type": "http.response.start", "status": 206, "headers": headers.raw})
+        if send_header_only:
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+        else:
+            await self._send_bytes(send, start, end, more_body=False, first=first)
+
+    async def _handle_multiple_ranges(
+        self, send: Send, ranges: list[tuple[int, int]], file_size: int, send_header_only: bool,
+    ) -> None:
+        boundary = token_hex(13)
+        length, part_header = self.generate_multipart(
+            ranges, boundary, file_size, self.headers["content-type"],
+        )
+        headers = MutableHeaders(raw=list(self.raw_headers))
+        headers["content-type"] = f"multipart/byteranges; boundary={boundary}"
+        headers["content-length"] = str(length)
+        first = None if send_header_only else await self._read_chunk(*ranges[0])
+        await send({"type": "http.response.start", "status": 206, "headers": headers.raw})
+        if not send_header_only:
+            for index, (start, end) in enumerate(ranges):
+                await send({"type": "http.response.body", "body": part_header(start, end),
+                            "more_body": True})
+                await self._send_bytes(
+                    send, start, end, more_body=True, first=first if index == 0 else None,
+                )
+                await send({"type": "http.response.body", "body": b"\r\n", "more_body": True})
+        await send({"type": "http.response.body", "body": b"" if send_header_only else
+                    f"--{boundary}--".encode("ascii"), "more_body": False})
 
 
 def create_batch_router(

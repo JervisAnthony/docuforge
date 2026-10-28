@@ -22,6 +22,12 @@ Response construction failures also release the handle. The compatibility
 `download_path` inspection method provides no lifetime guarantee; HTTP streaming
 uses the scoped handle.
 
+The handle now also owns the reader that passed ZIP CRC/structure validation and
+its validated stat/size. Full and range responses use this reader without reopening
+the informational Path or using pathsend. Release closes the reader before the
+matching pin is removed. See [verified ZIP downloads](mvp3-batch-verified-downloads.md)
+for same-descriptor validation, HTTP compatibility and platform limitations.
+
 ## Deletion and TTL
 
 DELETE commits irreversible DELETING intent before returning 204. New status,
@@ -48,7 +54,7 @@ all accepted downloads, then cleans ephemeral workspaces and clears sessions.
 Durable storage ownership remains held until downloads drain and is released last.
 New service-level download acquisition after shutdown begins is refused.
 
-Pins are process-local and never persisted; schema remains v2. Process crashes
+Pins are process-local and never persisted; schema remains v3. Process crashes
 terminate streams and close descriptors. Existing OS owner-lock semantics and
 persisted DELETING tombstones allow restart to finish cleanup with no pin recovery.
 No additional OS archive file lock is needed under exclusive storage ownership.
