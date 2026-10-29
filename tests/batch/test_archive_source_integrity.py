@@ -246,6 +246,9 @@ def test_descriptor_and_staging_cleanup_on_failure(fixture, monkeypatch, failure
     opened = []
     streams = []
     real_open, real_fdopen, real_fstat = os.open, os.fdopen, os.fstat
+    source_nodes = {(node.st_dev, node.st_ino)
+                    for output in result.outputs for node in [output.output_path.stat()]}
+    failed_stats = []
 
     def opening(*args, **kwargs):
         descriptor = real_open(*args, **kwargs)
@@ -262,7 +265,9 @@ def test_descriptor_and_staging_cleanup_on_failure(fixture, monkeypatch, failure
     if failure == "fstat":
         def fstat(descriptor):
             node = real_fstat(descriptor)
-            if stat.S_ISREG(node.st_mode):
+            # Do not inject failures into pytest's own regular capture files.
+            if (node.st_dev, node.st_ino) in source_nodes:
+                failed_stats.append(descriptor)
                 raise OSError("private diagnostic")
             return node
         monkeypatch.setattr(module.os, "fstat", fstat)
@@ -290,6 +295,8 @@ def test_descriptor_and_staging_cleanup_on_failure(fixture, monkeypatch, failure
                     raise OSError("private diagnostic")
         monkeypatch.setattr(module, "_open_verified_archive_source", failing)
     rejected(result, destination, previous)
+    if failure == "fstat":
+        assert failed_stats
     assert opened
     assert all(stream.closed for stream in streams)
     for descriptor in opened:
@@ -368,15 +375,29 @@ def test_zip64_size_seam(fixture, monkeypatch, large):
 def test_descriptor_must_be_regular(fixture, monkeypatch, node_type):
     result, destination, previous = fixture
     real_fstat = os.fstat
+    source_nodes = {(node.st_dev, node.st_ino)
+                    for output in result.outputs for node in [output.output_path.stat()]}
+    rejected_descriptors = []
 
     def fstat(fd):
         node = real_fstat(fd)
-        if stat.S_ISREG(node.st_mode):
-            return SimpleNamespace(st_mode=node_type)
+        if (node.st_dev, node.st_ino) in source_nodes:
+            rejected_descriptors.append(fd)
+            return os.stat_result(
+                (node_type | stat.S_IMODE(node.st_mode), *node[1:]),
+                {name: getattr(node, name) for name in dir(node)
+                 if name.startswith("st_") and name not in (
+                     "st_mode", "st_ino", "st_dev", "st_nlink", "st_uid", "st_gid", "st_size",
+                 )},
+            )
         return node
 
     monkeypatch.setattr(module.os, "fstat", fstat)
     rejected(result, destination, previous)
+    assert rejected_descriptors
+    for descriptor in rejected_descriptors:
+        with pytest.raises(OSError):
+            real_fstat(descriptor)
 
 
 def test_recognized_reparse_point_is_unsafe():

@@ -26,7 +26,10 @@ def test_independent_idempotent_pins_defer_delete(tmp_path, durable):
     handles = [runner.acquire_download(batch_id, token) for _ in range(2)]
     try:
         original = handles[0].path.read_bytes()
-        assert {field.name for field in fields(BatchDownloadHandle)} == {"path", "_release"}
+        assert {field.name for field in fields(BatchDownloadHandle)} == {
+            "path", "reader", "stat_result", "_release", "_released", "_release_lock",
+        }
+        assert handles[0].reader.fileno() != handles[1].reader.fileno()
         assert len(runner._active_downloads[batch_id]) == 2
         runner.delete_session(batch_id, token)
         assert runner._sessions[batch_id].phase is BatchExecutionPhase.DELETING
@@ -38,6 +41,7 @@ def test_independent_idempotent_pins_defer_delete(tmp_path, durable):
             runner._sweep_locked()
         handles[0].release()
         handles[0].release()
+        assert handles[0].reader.closed and not handles[1].reader.closed
         assert len(runner._active_downloads[batch_id]) == 1
         assert handles[1].path.read_bytes() == original
         handles[1].release()

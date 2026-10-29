@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shutil
 import sqlite3
 import stat
 import tempfile
 import zlib
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from threading import RLock
+from typing import BinaryIO
 from zipfile import ZIP_DEFLATED, BadZipFile, LargeZipFile, ZipFile
 
 from docuforge.api.batch_access import access_token_hash_is_valid
@@ -545,17 +547,120 @@ def decode_input_manifest(
         raise BatchPersistenceError("Stored input manifest metadata is invalid.") from error
 
 
+class BatchArchiveValidationError(RuntimeError):
+    """The canonical archive could not be opened and verified safely."""
+
+
+_DOWNLOAD_DIRECTORY_OPEN = (
+    os.open in os.supports_dir_fd and os.stat in os.supports_dir_fd
+    and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY")
+)
+
+
+def _archive_node_is_link(node: os.stat_result) -> bool:
+    return stat.S_ISLNK(node.st_mode) or bool(
+        getattr(node, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+
+
+def _archive_identity(node: os.stat_result) -> tuple[int, int, int]:
+    return node.st_dev, node.st_ino, node.st_mode
+
+
+def _archive_metadata(node: os.stat_result) -> tuple[int, ...]:
+    return (*_archive_identity(node), node.st_size, node.st_mtime_ns,
+            node.st_ctime_ns if os.name != "nt" else 0)
+
+
+def _check_archive_node(node: os.stat_result, expected: os.stat_result) -> None:
+    if (_archive_node_is_link(node) or not stat.S_ISREG(node.st_mode)
+            or _archive_metadata(node) != _archive_metadata(expected)):
+        raise OSError("Archive identity changed.")
+
+
+def _check_archive_directory(node: os.stat_result, expected: os.stat_result) -> None:
+    if (_archive_node_is_link(node) or not stat.S_ISDIR(node.st_mode)
+            or _archive_identity(node) != _archive_identity(expected)):
+        raise OSError("Archive ancestry changed.")
+
+
+def _open_validated_download_archive(
+    path: Path, result: BatchImageResult | BatchDocumentResult, workspace: BatchSessionWorkspace,
+) -> tuple[BinaryIO, os.stat_result]:
+    """Transfer ownership of the exact reader whose ZIP structure/CRC were checked."""
+    reader = None
+    accepted = False
+    try:
+        canonical = workspace.archive_path.absolute()
+        if ".." in path.parts or path.absolute() != canonical:
+            raise OSError("Unexpected archive path.")
+        directories = [(directory, directory.lstat()) for directory in reversed(canonical.parents)]
+        for directory, expected in directories:
+            _check_archive_directory(expected, expected)
+        before = canonical.lstat()
+        _check_archive_node(before, before)
+        with ExitStack() as stack:
+            parent_fd = None
+            for directory, expected in directories:
+                _check_archive_directory(directory.lstat(), expected)
+                if _DOWNLOAD_DIRECTORY_OPEN:
+                    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+                    parent_fd = os.open(
+                        directory if parent_fd is None else directory.name, flags, dir_fd=parent_fd,
+                    )
+                    stack.callback(os.close, parent_fd)
+                    _check_archive_directory(os.fstat(parent_fd), expected)
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+            flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+            descriptor = os.open(
+                canonical if parent_fd is None else canonical.name, flags, dir_fd=parent_fd,
+            )
+            try:
+                reader = os.fdopen(descriptor, "rb")
+            except BaseException:
+                os.close(descriptor)
+                raise
+            opened = os.fstat(reader.fileno())
+            _check_archive_node(opened, before)
+            _check_archive_node(canonical.lstat(), opened)
+            for directory, expected in directories:
+                _check_archive_directory(directory.lstat(), expected)
+            if not _archive_reader_is_valid(reader, result):
+                raise OSError("Archive ZIP validation failed.")
+            _check_archive_node(os.fstat(reader.fileno()), opened)
+            for directory, expected in directories:
+                _check_archive_directory(directory.lstat(), expected)
+            _check_archive_node(canonical.lstat(), opened)
+            reader.seek(0)
+        accepted = True
+        return reader, opened
+    except (OSError, ValueError) as error:
+        raise BatchArchiveValidationError("The batch archive is unavailable.") from error
+    finally:
+        if reader is not None and not accepted:
+            try:
+                reader.close()
+            except OSError as error:
+                raise BatchArchiveValidationError("The batch archive is unavailable.") from error
+
+
 def archive_is_valid(
     path: Path, result: BatchImageResult | BatchDocumentResult, workspace: BatchSessionWorkspace
 ) -> bool:
+    """Compatibility path inspection sharing the descriptor-based ZIP validator."""
+    try:
+        reader, _ = _open_validated_download_archive(path, result, workspace)
+        reader.close()
+        return True
+    except (BatchArchiveValidationError, OSError):
+        return False
+
+
+def _archive_reader_is_valid(reader: BinaryIO, result: BatchImageResult | BatchDocumentResult) -> bool:
     expected = tuple(output.output_path.name for output in result.outputs)
     try:
-        node = path.lstat()
-        if stat.S_ISLNK(node.st_mode) or not stat.S_ISREG(node.st_mode):
-            return False
-        if path.resolve(strict=True) != workspace.archive_path.resolve(strict=True):
-            return False
-        with ZipFile(path) as archive:
+        with ZipFile(reader) as archive:
             infos = archive.infolist()
             if any(
                 info.flag_bits & 1 or info.is_dir() or info.compress_type != ZIP_DEFLATED

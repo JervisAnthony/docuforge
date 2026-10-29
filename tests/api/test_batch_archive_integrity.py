@@ -254,11 +254,15 @@ def test_durable_failure_is_atomic(tmp_path):
 @pytest.mark.parametrize("missing", [False, True])
 def test_repair_does_not_repeat_converter(tmp_path, durable, missing):
     runner, workspace, batch_id, token = _ready(tmp_path if durable else None)
+    first = handle = None
     try:
         first = runner.acquire_download(batch_id, token)
         updated_at = runner._sessions[batch_id].updated_at
         if missing:
-            workspace.archive_path.unlink()
+            try:
+                workspace.archive_path.unlink()
+            except PermissionError:
+                pytest.skip("platform denies unlinking an archive with an open reader")
         else:
             workspace.archive_path.write_bytes(b"not a zip")
         with pytest.raises(ApiError):
@@ -284,6 +288,10 @@ def test_repair_does_not_repeat_converter(tmp_path, durable, missing):
         assert archive_is_valid(handle.path, runner._sessions[batch_id].result, workspace)
         handle.release()
     finally:
+        if first is not None:
+            first.release()
+        if handle is not None:
+            handle.release()
         runner.shutdown()
 
 
@@ -369,13 +377,13 @@ def test_validation_precedes_pin_and_no_output_skips_scan():
 
     runner, _, batch_id, token = _ready()
     try:
-        validator = batches.archive_is_valid
+        validator = batches._open_validated_download_archive
 
         def validate(*args):
             assert not runner._active_downloads
             return validator(*args)
 
-        with patch.object(batches, "archive_is_valid", side_effect=validate) as scan:
+        with patch.object(batches, "_open_validated_download_archive", side_effect=validate) as scan:
             runner.acquire_download(batch_id, token).release()
             scan.assert_called_once()
         runner.shutdown()
@@ -387,7 +395,7 @@ def test_validation_precedes_pin_and_no_output_skips_scan():
         batch_id, token = str(request.batch_id), grant.access_token
         wait_for(runner, batch_id, token, BatchExecutionPhase.READY)
         session = runner._sessions[batch_id]
-        with patch.object(batches, "archive_is_valid") as scan, pytest.raises(ApiError) as caught:
+        with patch.object(batches, "_open_validated_download_archive") as scan, pytest.raises(ApiError) as caught:
             runner.acquire_download(batch_id, token)
         assert caught.value.code == "batch_has_no_outputs"
         scan.assert_not_called()

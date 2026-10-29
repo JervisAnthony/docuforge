@@ -52,3 +52,10 @@ verify bytes and CRC, inject a regular-file replacement before descriptor openin
 require safe rejection, preserve the previous ZIP and external sentinel, and clean
 staging. The production image now reports fifteen PASS markers (two runtime engine
 checks plus thirteen batch checks). See [safe ZIP source pinning](mvp3-batch-archive-source-integrity.md).
+
+Require `PASS batch-download-descriptor-pinning`: acquire a validated synthetic ZIP
+reader, verify its identity, exercise path replacement where supported, reject a
+second response pathname open/pathsend, verify transmitted ZIP bytes and CRC, close
+the reader, clear pins and delete normally. The production image now reports sixteen
+PASS markers (two engine checks plus fourteen batch checks). See
+[verified ZIP downloads](mvp3-batch-verified-downloads.md).

@@ -1,5 +1,9 @@
 # Retained batch archive integrity
 
+Downloads now [validate and stream the same owned descriptor](mvp3-batch-verified-downloads.md).
+The compatibility path validator shares its ZIP checks; HTTP acquisition retains
+the validated reader instead of reopening a checked pathname.
+
 New ZIPs use [safe source pinning](mvp3-batch-archive-source-integrity.md): bounded
 descriptor reads and observable source-mutation checks before atomic publication.
 This packaging boundary does not add source rescanning to archive downloads.
@@ -20,4 +24,4 @@ Packaging-only recovery reconstructs `result.zip` without reconversion. Partial 
 
 Wrong capabilities receive the private 404 before any archive scanning or integrity mutation. Status polling and the TTL sweeper do not CRC-scan archives. Success and failure do not extend retention. Already accepted pinned streams are not retroactively revoked by later validation.
 
-This provides structural and ZIP-integrity revalidation, with no cryptographic digest, hostile-filesystem tamper-proof guarantee, continuous monitoring, or completed-output reset/revalidation. Concurrent privileged filesystem replacement remains outside this guarantee.
+This provides structural and ZIP-integrity revalidation, with no cryptographic digest, hostile-filesystem tamper-proof guarantee, continuous monitoring, or completed-output reset/revalidation. Descriptor-owned downloads prevent later pathname replacement from redirecting accepted streams; arbitrary concurrent in-place mutation remains outside this guarantee.

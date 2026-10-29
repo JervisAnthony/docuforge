@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import io
 import os
 import sys
 import tempfile
@@ -180,6 +182,7 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
             _verify_worker_publication(storage)
             _verify_input_integrity(storage)
             _verify_archive_source_pinning(storage)
+            _verify_download_descriptor_pinning(storage)
     except BatchPersistenceSmokeError:
         raise
     except (OSError, RuntimeError, ValueError) as error:
@@ -198,7 +201,70 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
         "batch-worker-publication",
         "batch-input-integrity",
         "batch-archive-source-pinning",
+        "batch-download-descriptor-pinning",
     )
+
+
+def _verify_download_descriptor_pinning(storage: Path) -> None:
+    """Validate, pin and transmit one synthetic ZIP without a second pathname open."""
+    from docuforge.api.routes.batches import _PinnedFileResponse
+
+    runner = BatchExecutionService(office_engine_factory=LibreOfficeEngine, storage_directory=storage)
+    handle = None
+    try:
+        workspace = runner.create_workspace()
+        source = workspace.inputs_directory / "descriptor-smoke.png"
+        Image.new("RGB", (8, 8), "green").save(source)
+        request = BatchImageConvertRequest(
+            (BatchImageInput(source),), workspace.output_directory, "jpg", workspace.batch_id,
+        )
+        grant = runner.create_session(request, workspace)
+        batch_id, token = str(request.batch_id), grant.access_token
+        _wait_ready(runner, batch_id, token)
+        handle = runner.acquire_download(batch_id, token)
+        identity = os.fstat(handle.reader.fileno())
+        original = handle.read_chunk(0, handle.size_bytes)
+        if (identity.st_dev, identity.st_ino, identity.st_size) != (
+            handle.stat_result.st_dev, handle.stat_result.st_ino, handle.size_bytes,
+        ):
+            raise BatchPersistenceSmokeError("download descriptor identity changed")
+        try:
+            workspace.archive_path.rename(workspace.path / "original.zip")
+        except PermissionError:
+            pass  # Windows may deny replacing an open file; the open-rejection seam still runs.
+        else:
+            workspace.archive_path.write_bytes(b"SYNTHETIC UNVALIDATED REPLACEMENT")
+        response = _PinnedFileResponse(handle, media_type="application/zip")
+        messages = []
+
+        async def receive():
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            if message["type"] == "http.response.pathsend":
+                raise BatchPersistenceSmokeError("download attempted pathsend")
+            messages.append(message)
+
+        with patch("anyio.open_file", side_effect=BatchPersistenceSmokeError("download reopened path")):
+            asyncio.run(response(
+                {"type": "http", "method": "GET", "headers": [],
+                 "asgi": {"spec_version": "2.4"}, "extensions": {"http.response.pathsend": {}}},
+                receive, send,
+            ))
+        transmitted = b"".join(message.get("body", b"") for message in messages)
+        if (messages[0]["status"] != 200 or transmitted != original
+                or not handle.reader.closed or runner._active_downloads):
+            raise BatchPersistenceSmokeError("download did not retain the validated descriptor")
+        with ZipFile(io.BytesIO(transmitted)) as archive:
+            if archive.testzip() is not None or len(archive.namelist()) != 1:
+                raise BatchPersistenceSmokeError("download descriptor ZIP was invalid")
+        runner.delete_session(batch_id, token)
+        if workspace.path.exists():
+            raise BatchPersistenceSmokeError("released download did not permit deletion")
+    finally:
+        if handle is not None:
+            handle.release()
+        runner.shutdown()
 
 
 def _verify_archive_source_pinning(storage: Path) -> None:
