@@ -32,6 +32,8 @@ def create_app(
         office_engine_factory=office_engine_factory,
         max_workers=resolved_settings.batch_max_workers,
         max_inflight_sessions=resolved_settings.batch_max_inflight_sessions,
+        max_active_downloads=resolved_settings.batch_max_active_downloads,
+        max_downloads_per_batch=resolved_settings.batch_max_downloads_per_batch,
         terminal_ttl_seconds=resolved_settings.batch_terminal_ttl_seconds,
         cleanup_interval_seconds=resolved_settings.batch_cleanup_interval_seconds,
         min_free_storage_bytes=resolved_settings.batch_min_free_storage_bytes,

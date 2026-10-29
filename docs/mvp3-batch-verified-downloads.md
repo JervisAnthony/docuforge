@@ -108,7 +108,13 @@ during validation reject acquisition, and later pathname replacement cannot redi
 an accepted stream. Concurrent writes to the same inode after validation can still
 affect transmitted bytes; a descriptor is not a filesystem snapshot or cryptographic
 authenticity guarantee. No heavy full-ZIP buffering is introduced to claim otherwise.
-No schema, durable lease, dependency, converter, frontend or public API changes are
+No schema, durable lease, dependency, converter or frontend product changes are
 introduced. Schema remains v3. [Source pinning during ZIP packaging](mvp3-batch-archive-source-integrity.md),
 original input fingerprints, converted-output integrity and output budgets remain
 separate, unchanged controls.
+
+Reader admission is bounded independently from execution admission: defaults are
+eight globally and four per batch. Capability and phase/output checks precede the
+safe 503 capacity error; the gate precedes descriptor opening and CRC validation.
+Accepted descriptors, streaming success contracts and cleanup paths are unchanged.
+Validation still holds the service lock. See [download admission](mvp3-batch-download-admission.md).

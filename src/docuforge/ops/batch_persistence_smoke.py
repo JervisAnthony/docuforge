@@ -7,6 +7,7 @@ import io
 import os
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from time import monotonic, sleep
 from unittest.mock import patch
@@ -183,6 +184,7 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
             _verify_input_integrity(storage)
             _verify_archive_source_pinning(storage)
             _verify_download_descriptor_pinning(storage)
+            _verify_download_admission(storage)
     except BatchPersistenceSmokeError:
         raise
     except (OSError, RuntimeError, ValueError) as error:
@@ -202,7 +204,66 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
         "batch-input-integrity",
         "batch-archive-source-pinning",
         "batch-download-descriptor-pinning",
+        "batch-download-admission",
     )
+
+
+def _verify_download_admission(storage: Path) -> None:
+    """Bound retained synthetic readers and recover capacity without changing state."""
+    runner = BatchExecutionService(
+        office_engine_factory=LibreOfficeEngine, storage_directory=storage,
+        max_active_downloads=2, max_downloads_per_batch=2,
+    )
+    handles = []
+    try:
+        workspace = runner.create_workspace()
+        source = workspace.inputs_directory / "admission-smoke.png"
+        Image.new("RGB", (8, 8), "green").save(source)
+        request = BatchImageConvertRequest(
+            (BatchImageInput(source),), workspace.output_directory, "jpg", workspace.batch_id,
+        )
+        grant = runner.create_session(request, workspace)
+        batch_id, token = str(request.batch_id), grant.access_token
+        _wait_ready(runner, batch_id, token)
+        handles.extend(runner.acquire_download(batch_id, token) for _ in range(2))
+        before = replace(runner._sessions[batch_id])
+        row = runner._repository.get(batch_id)
+        pins = set(runner._active_downloads[batch_id])
+        with patch(
+            "docuforge.api.batches._open_validated_download_archive",
+            side_effect=BatchPersistenceSmokeError("capacity rejection opened archive"),
+        ):
+            try:
+                runner.acquire_download(batch_id, token)
+            except ApiError as error:
+                if (error.status_code, error.code, error.message) != (
+                    503, "batch_download_capacity_exceeded",
+                    "The batch download service is temporarily at capacity. Try again later.",
+                ):
+                    raise BatchPersistenceSmokeError("unsafe download backpressure") from None
+            else:
+                raise BatchPersistenceSmokeError("download capacity was exceeded")
+        if (runner._sessions[batch_id] != before or runner._repository.get(batch_id) != row
+                or runner._active_downloads[batch_id] != pins
+                or any(handle.reader.closed for handle in handles)):
+            raise BatchPersistenceSmokeError("download rejection changed accepted state")
+        handles[0].release()
+        handles.append(runner.acquire_download(batch_id, token))
+        handle = handles[-1]
+        with ZipFile(io.BytesIO(handle.read_chunk(0, handle.size_bytes))) as archive:
+            if archive.testzip() is not None or len(archive.namelist()) != 1:
+                raise BatchPersistenceSmokeError("admitted reader ZIP was invalid")
+        for handle in handles:
+            handle.release()
+        if runner._active_downloads or any(not handle.reader.closed for handle in handles):
+            raise BatchPersistenceSmokeError("download capacity was not released")
+        runner.delete_session(batch_id, token)
+        if workspace.path.exists():
+            raise BatchPersistenceSmokeError("download admission blocked deletion")
+    finally:
+        for handle in handles:
+            handle.release()
+        runner.shutdown()
 
 
 def _verify_download_descriptor_pinning(storage: Path) -> None:

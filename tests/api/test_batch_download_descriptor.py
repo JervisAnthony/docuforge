@@ -593,6 +593,7 @@ def test_handle_constructor_failure_closes_validated_reader(ready, monkeypatch):
 
 
 def test_partial_pin_registration_failure_closes_reader_and_unpins(ready, monkeypatch):
+    existing = ready.acquire()
     readers = []
     opening = batches._open_validated_download_archive
 
@@ -606,11 +607,19 @@ def test_partial_pin_registration_failure_closes_reader_and_unpins(ready, monkey
             super().add(pin)
             raise RuntimeError("registration failed")
 
-    ready.runner._active_downloads[ready.batch_id] = FailingPins()
+    original_pins = set(ready.runner._active_downloads[ready.batch_id])
+    ready.runner._active_downloads[ready.batch_id] = FailingPins(original_pins)
     monkeypatch.setattr(batches, "_open_validated_download_archive", track)
     with pytest.raises(RuntimeError, match="registration failed"):
         ready.acquire()
     assert readers and all(reader.closed for reader in readers)
+    assert ready.runner._active_downloads[ready.batch_id] == original_pins
+    assert not existing.reader.closed
+    ready.runner._active_downloads[ready.batch_id] = original_pins
+    replacement = ready.acquire()
+    assert len(ready.runner._active_downloads[ready.batch_id]) == 2
+    replacement.release()
+    existing.release()
     assert not ready.runner._active_downloads
 
 
