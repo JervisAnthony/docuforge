@@ -202,6 +202,8 @@ class BatchExecutionService:
         office_engine_factory: OfficeEngineFactory,
         max_workers: int = 2,
         max_inflight_sessions: int = 8,
+        max_active_downloads: int = 8,
+        max_downloads_per_batch: int = 4,
         terminal_ttl_seconds: int = 3600,
         cleanup_interval_seconds: int = 60,
         min_free_storage_bytes: int = 200 * 1024 * 1024,
@@ -222,6 +224,8 @@ class BatchExecutionService:
         if type(cleanup_interval_seconds) is not int or cleanup_interval_seconds <= 0:
             raise ValueError("cleanup_interval_seconds must be a positive integer")
         for name, value in (
+            ("max_active_downloads", max_active_downloads),
+            ("max_downloads_per_batch", max_downloads_per_batch),
             ("min_free_storage_bytes", min_free_storage_bytes),
             ("max_published_output_bytes", max_published_output_bytes),
             ("max_upload_request_bytes", max_upload_request_bytes),
@@ -236,6 +240,8 @@ class BatchExecutionService:
         self._pending_storage_write_bytes = 0
         self._office_engine_factory = office_engine_factory
         self._max_inflight_sessions = max_inflight_sessions
+        self._max_active_downloads = max_active_downloads
+        self._max_downloads_per_batch = max_downloads_per_batch
         self._terminal_ttl_seconds = terminal_ttl_seconds
         self._cleanup_interval_seconds = cleanup_interval_seconds
         self._cleanup_stop = Event()
@@ -558,11 +564,20 @@ class BatchExecutionService:
             path = self._download_candidate_path_locked(session)
             if path is None or session.result is None:
                 self._unavailable_download_locked(session)
+            # Eligibility precedes backpressure; reject before opening or CRC work.
+            # The lock covers this decision, validation and unique pin registration.
+            normalized_id = str(batch_id)
+            if (len(self._active_downloads.get(normalized_id, ())) >= self._max_downloads_per_batch
+                    or sum(map(len, self._active_downloads.values())) >= self._max_active_downloads):
+                raise ApiError(
+                    status_code=503,
+                    code="batch_download_capacity_exceeded",
+                    message="The batch download service is temporarily at capacity. Try again later.",
+                )
             try:
                 reader, node = _open_validated_download_archive(path, session.result, session.workspace)
             except BatchArchiveValidationError:
                 self._unavailable_download_locked(session)
-            normalized_id = str(batch_id)
             pin_id = uuid4().hex
             accepted = False
             try:

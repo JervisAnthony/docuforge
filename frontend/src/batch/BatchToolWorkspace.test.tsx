@@ -99,6 +99,24 @@ describe('batch workspace', () => {
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
   })
 
+  it('shows download capacity backpressure while retaining the private session', async () => {
+    const api = client(snapshot({ phase: 'ready', can_download: true }))
+    const message = 'The batch download service is temporarily at capacity. Try again later.'
+    vi.mocked(api.downloadBatch).mockRejectedValue(new ApiClientError(message, {
+      kind: 'http', status: 503, code: 'batch_download_capacity_exceeded',
+    }))
+    render(<BatchToolWorkspace toolId="batch-image-convert" onBack={vi.fn()} client={api} />)
+    fireEvent.change(screen.getByLabelText('Image files'), { target: { files: [new File(['a'], 'one.png')] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Start batch' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Download ZIP' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(message)
+    expect(alert).not.toHaveTextContent('private-token')
+    expect(screen.getByRole('region', { name: 'Batch status' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Download ZIP' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Copy recovery key' })).toBeEnabled()
+  })
+
   it.each(['createBatch', 'cancelBatch', 'recoverBatch', 'downloadBatch'] as const)(
     'hides private diagnostics from JavaScript and network errors in %s', async (method) => {
       const api = client(snapshot({ phase: 'ready', can_recover: true, can_download: true }))

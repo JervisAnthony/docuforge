@@ -349,6 +349,7 @@ def create_batch_router(
             },
             404: {"model": ApiErrorResponse},
             409: {"model": ApiErrorResponse},
+            503: {"model": ApiErrorResponse, "description": "Download capacity or persistence unavailable."},
         },
     )
     def download(

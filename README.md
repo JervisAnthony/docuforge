@@ -264,6 +264,11 @@ Retained batch ZIPs are revalidated before new downloads are pinned and streamed
 Batch downloads validate ZIP structure and CRC through the same owned descriptor
 used for bounded full/range HTTP streaming. See [Verified ZIP downloads](docs/mvp3-batch-verified-downloads.md).
 
+Accepted archive readers are bounded separately from execution admission: eight per
+service and four per batch by default. Both limits are configurable; excess eligible
+requests receive safe 503 backpressure before ZIP opening or CRC work. See
+[Download admission](docs/mvp3-batch-download-admission.md).
+
 New ZIPs stream from verified source descriptors with bounded reads and observable
 mutation checks before atomic publication. See [Safe ZIP source pinning](docs/mvp3-batch-archive-source-integrity.md).
 

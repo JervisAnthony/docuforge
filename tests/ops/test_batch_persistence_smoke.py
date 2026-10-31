@@ -18,6 +18,7 @@ def test_batch_persistence_smoke_runs_real_restart_cycle() -> None:
         "batch-input-integrity",
         "batch-archive-source-pinning",
         "batch-download-descriptor-pinning",
+        "batch-download-admission",
     )
 
 
@@ -40,6 +41,7 @@ def test_batch_persistence_smoke_cli_success(monkeypatch, capsys) -> None:
             "batch-input-integrity",
             "batch-archive-source-pinning",
             "batch-download-descriptor-pinning",
+            "batch-download-admission",
         ),
     )
     assert batch_persistence_smoke.main() == 0
@@ -58,7 +60,8 @@ def test_batch_persistence_smoke_cli_success(monkeypatch, capsys) -> None:
         "PASS batch-input-integrity",
         "PASS batch-archive-source-pinning",
         "PASS batch-download-descriptor-pinning",
-        "Durable batch persistence smoke passed: 14 checks",
+        "PASS batch-download-admission",
+        "Durable batch persistence smoke passed: 15 checks",
     ]
 
 

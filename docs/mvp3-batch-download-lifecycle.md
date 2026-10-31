@@ -65,3 +65,10 @@ This is not distributed leasing, persistent reader tracking, download resumption
 bandwidth limiting or range-state persistence.
 
 New download acquisition revalidates the retained archive before creating a reader pin. An already accepted pinned stream is not retroactively revoked by later validation. See [archive integrity](mvp3-batch-archive-integrity.md).
+
+Accepted readers also occupy independent process-local download capacity: eight
+globally and four per BatchId by default. Authorization and phase/output eligibility
+precede the capacity check; safe 503 backpressure precedes ZIP opening/CRC work.
+Every existing close-before-unpin path immediately frees its slot. Full download
+capacity does not block DELETE, TTL cleanup or worker/upload admission. See
+[download admission](mvp3-batch-download-admission.md) for configuration and boundaries.

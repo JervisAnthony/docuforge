@@ -59,3 +59,10 @@ second response pathname open/pathsend, verify transmitted ZIP bytes and CRC, cl
 the reader, clear pins and delete normally. The production image now reports sixteen
 PASS markers (two engine checks plus fourteen batch checks). See
 [verified ZIP downloads](mvp3-batch-verified-downloads.md).
+
+Require `PASS batch-download-admission`: fill a low synthetic reader limit,
+reject another acquisition before archive opening without changing durable state
+or existing readers, release/reuse a slot, verify descriptor ZIP bytes/CRC, release
+all pins and delete normally. The current production image must emit **seventeen**
+PASS markers (two engine checks plus fifteen batch checks). See
+[bounded download admission](mvp3-batch-download-admission.md).
