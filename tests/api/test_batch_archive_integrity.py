@@ -372,7 +372,7 @@ def test_ineligible_phases_do_not_scan(phase):
         runner.shutdown()
 
 
-def test_validation_precedes_pin_and_no_output_skips_scan():
+def test_validation_holds_provisional_pin_and_no_output_skips_scan():
     from docuforge.api import batches
 
     runner, _, batch_id, token = _ready()
@@ -380,7 +380,7 @@ def test_validation_precedes_pin_and_no_output_skips_scan():
         validator = batches._open_validated_download_archive
 
         def validate(*args):
-            assert not runner._active_downloads
+            assert len(runner._active_downloads[batch_id]) == 1
             return validator(*args)
 
         with patch.object(batches, "_open_validated_download_archive", side_effect=validate) as scan:
