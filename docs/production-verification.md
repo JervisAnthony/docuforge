@@ -63,6 +63,16 @@ PASS markers (two engine checks plus fourteen batch checks). See
 Require `PASS batch-download-admission`: fill a low synthetic reader limit,
 reject another acquisition before archive opening without changing durable state
 or existing readers, release/reuse a slot, verify descriptor ZIP bytes/CRC, release
-all pins and delete normally. The current production image must emit **seventeen**
-PASS markers (two engine checks plus fifteen batch checks). See
+all pins and delete normally. The current production image must emit **eighteen**
+PASS markers (two engine checks plus sixteen batch checks, including validation
+concurrency below). See
 [bounded download admission](mvp3-batch-download-admission.md).
+
+Require `PASS batch-download-validation-concurrency`: pause a real synthetic ZIP
+scan after provisional admission, complete authorized status while it is paused,
+reject excess capacity before opening, promote the same descriptor and pin, verify
+ZIP structure/CRC, release all pins and delete. The production image must now emit
+**eighteen** PASS markers (two runtime and sixteen durable checks). All previous
+markers remain required. Windows CI also runs core concurrency and download
+lifecycle/descriptor checks. See
+[validation concurrency](mvp3-batch-download-validation-concurrency.md).

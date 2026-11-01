@@ -111,8 +111,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev,web]"
-      - name: Verify durable storage ownership
-        run: python -m pytest tests/api/test_batch_storage_ownership.py
+      - name: Verify durable storage ownership and download concurrency
+        run: >-
+          python -m pytest tests/api/test_batch_storage_ownership.py
+          tests/api/test_batch_download_validation_concurrency.py
+          tests/api/test_batch_download_descriptor.py
+          tests/api/test_batch_download_lifecycle.py
 
   ruff:
     name: Ruff

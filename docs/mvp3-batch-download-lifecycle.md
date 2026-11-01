@@ -8,7 +8,7 @@ replace that archive during this gap.
 
 ## Download pin
 
-`acquire_download` validates the capability once and establishes a process-local pin
+`acquire_download` validates the capability and establishes a provisional process-local pin
 atomically under the service RLock. A handle holds the archive Path and an idempotent
 release callback. Bookkeeping maps BatchIds to sets of unique opaque UUID pin IDs;
 it contains no capability, token hash, client metadata or range state. Multiple
@@ -50,7 +50,7 @@ mutation because recovery may replace the archive. Recovery resumes after releas
 ## Shutdown and crash boundary
 
 Graceful shutdown stops the sweeper and workers, drains pending upload writes and
-all accepted downloads, then cleans ephemeral workspaces and clears sessions.
+all pending validations and accepted downloads, then cleans ephemeral workspaces and clears sessions.
 Durable storage ownership remains held until downloads drain and is released last.
 New service-level download acquisition after shutdown begins is refused.
 
@@ -64,7 +64,10 @@ No additional OS archive file lock is needed under exclusive storage ownership.
 This is not distributed leasing, persistent reader tracking, download resumption,
 bandwidth limiting or range-state persistence.
 
-New download acquisition revalidates the retained archive before creating a reader pin. An already accepted pinned stream is not retroactively revoked by later validation. See [archive integrity](mvp3-batch-archive-integrity.md).
+New download acquisition reserves a provisional pin before revalidating the archive
+outside the lock, then rechecks eligibility before accepting the reader. An already
+accepted pinned stream is not retroactively revoked by later validation. See
+[archive integrity](mvp3-batch-archive-integrity.md).
 
 Accepted readers also occupy independent process-local download capacity: eight
 globally and four per BatchId by default. Authorization and phase/output eligibility
@@ -72,3 +75,13 @@ precede the capacity check; safe 503 backpressure precedes ZIP opening/CRC work.
 Every existing close-before-unpin path immediately frees its slot. Full download
 capacity does not block DELETE, TTL cleanup or worker/upload admission. See
 [download admission](mvp3-batch-download-admission.md) for configuration and boundaries.
+
+## Provisional readers
+
+A pending ZIP validation owns a provisional pin in the same active-reader registry.
+It defers physical deletion and shutdown ownership release and blocks recovery,
+but becomes an accepted HTTP reader only after a final locked eligibility check.
+DELETE/TTL tombstones and shutdown prevent promotion. Failed acquisition closes
+the reader before releasing the pin; accepted handles keep their normal lifecycle.
+Shutdown may wait for validation I/O to return. See
+[validation concurrency](mvp3-batch-download-validation-concurrency.md).

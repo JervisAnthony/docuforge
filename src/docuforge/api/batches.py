@@ -556,7 +556,7 @@ class BatchExecutionService:
                     self._admitted_batch_ids.discard(normalized_id)
 
     def acquire_download(self, batch_id: str, access_token: object) -> BatchDownloadHandle:
-        """Authorize and pin an archive atomically without refreshing retention."""
+        """Reserve a reader slot, validate off-lock, then promote the same reader."""
         with self._lock:
             if self._shutdown:
                 raise RuntimeError("batch execution service is shut down")
@@ -565,7 +565,7 @@ class BatchExecutionService:
             if path is None or session.result is None:
                 self._unavailable_download_locked(session)
             # Eligibility precedes backpressure; reject before opening or CRC work.
-            # The lock covers this decision, validation and unique pin registration.
+            # Pending validations and accepted streams share one bounded registry.
             normalized_id = str(batch_id)
             if (len(self._active_downloads.get(normalized_id, ())) >= self._max_downloads_per_batch
                     or sum(map(len, self._active_downloads.values())) >= self._max_active_downloads):
@@ -574,33 +574,75 @@ class BatchExecutionService:
                     code="batch_download_capacity_exceeded",
                     message="The batch download service is temporarily at capacity. Try again later.",
                 )
-            try:
-                reader, node = _open_validated_download_archive(path, session.result, session.workspace)
-            except BatchArchiveValidationError:
-                self._unavailable_download_locked(session)
             pin_id = uuid4().hex
-            accepted = False
+            expected = replace(session)
+            cancellation_requested = session.cancellation.cancellation_requested
             try:
+                self._active_downloads.setdefault(normalized_id, set()).add(pin_id)
+            except BaseException:
+                # Even an insertion which mutated before raising owns only this pin.
+                self._release_download(normalized_id, pin_id)
+                raise
+
+        reader = None
+        accepted = False
+        try:
+            try:
+                reader, node = _open_validated_download_archive(path, expected.result, expected.workspace)
+            except BatchArchiveValidationError:
+                with self._lock:
+                    self._require_download_promotion_locked(
+                        normalized_id, access_token, session, expected, cancellation_requested,
+                    )
+                    self._unavailable_download_locked(session)
+            with self._lock:
+                self._require_download_promotion_locked(
+                    normalized_id, access_token, session, expected, cancellation_requested,
+                )
                 handle = BatchDownloadHandle(
                     path, reader, node, lambda: self._release_download(normalized_id, pin_id)
                 )
-                self._active_downloads.setdefault(normalized_id, set()).add(pin_id)
                 accepted = True
                 return handle
-            finally:
-                if not accepted:
-                    try:
-                        with suppress(OSError):
+        finally:
+            if not accepted:
+                try:
+                    if reader is not None:
+                        try:
                             reader.close()
-                    finally:
-                        self._release_download(normalized_id, pin_id)
+                        except OSError:
+                            _LOGGER.warning("Batch download reader cleanup failed.")
+                finally:
+                    self._release_download(normalized_id, pin_id)
+
+    def _require_download_promotion_locked(
+        self, batch_id: str, access_token: object, session: _Session, expected: _Session,
+        cancellation_requested: bool,
+    ) -> None:
+        """Recheck authority without repeating filesystem/CRC work or refreshing TTL."""
+        if self._shutdown:
+            raise RuntimeError("batch execution service is shut down")
+        current = self._get_authorized_locked(batch_id, access_token)
+        if (current is not session or session.phase is not expected.phase
+                or session.attempt != expected.attempt or session.result is not expected.result
+                or session.archive_path != expected.archive_path
+                or session.workspace is not expected.workspace
+                or session.cancellation is not expected.cancellation
+                or session.cancellation.cancellation_requested != cancellation_requested
+                or session.session_error != expected.session_error):
+            raise ApiError(
+                status_code=404, code="batch_not_found",
+                message="The batch session was not found.",
+            )
+        self._download_candidate_path_locked(session)
 
     def _release_download(self, batch_id: str, pin_id: str) -> None:
         with self._downloads_drained:
             pins = self._active_downloads.get(batch_id)
-            if pins is None or pin_id not in pins:
+            if pins is None:
                 return
-            pins.remove(pin_id)
+            # Use the built-in operation: cleanup must survive a failing set override.
+            set.discard(pins, pin_id)
             if not pins:
                 del self._active_downloads[batch_id]
             self._downloads_drained.notify_all()

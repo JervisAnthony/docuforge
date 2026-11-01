@@ -273,3 +273,8 @@ New ZIPs stream from verified source descriptors with bounded reads and observab
 mutation checks before atomic publication. See [Safe ZIP source pinning](docs/mvp3-batch-archive-source-integrity.md).
 
 Batch tools retain private sessions across tool navigation in application memory. After reload, explicitly paste a previously copied private recovery key; credentials are never automatically stored. See [Browser batch continuity](docs/mvp3-browser-batch-continuity.md).
+
+ZIP download acquisition reserves a bounded provisional reader slot, validates the
+canonical descriptor outside the service lock, then rechecks session eligibility
+before promotion. Pending validation and accepted streaming share the existing
+limits. See [download validation concurrency](docs/mvp3-batch-download-validation-concurrency.md).
