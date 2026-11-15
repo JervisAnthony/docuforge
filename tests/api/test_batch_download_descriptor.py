@@ -153,7 +153,7 @@ def test_crc_and_response_consume_the_identical_descriptor_once(ready, monkeypat
     validated, streamed = [], []
 
     def validate(reader, result):
-        assert not ready.runner._active_downloads
+        assert len(ready.runner._active_downloads[ready.batch_id]) == 1
         assert validator(reader, result)  # Real structure and CRC scan, no truth-only mock.
         validated.append((reader, reader.fileno()))
         return True
@@ -612,7 +612,7 @@ def test_partial_pin_registration_failure_closes_reader_and_unpins(ready, monkey
     monkeypatch.setattr(batches, "_open_validated_download_archive", track)
     with pytest.raises(RuntimeError, match="registration failed"):
         ready.acquire()
-    assert readers and all(reader.closed for reader in readers)
+    assert not readers  # Provisional insertion fails before any descriptor is opened.
     assert ready.runner._active_downloads[ready.batch_id] == original_pins
     assert not existing.reader.closed
     ready.runner._active_downloads[ready.batch_id] = original_pins

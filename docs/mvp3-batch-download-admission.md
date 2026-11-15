@@ -5,7 +5,7 @@
 Accepted ZIP downloads retain an operating-system descriptor until response cleanup.
 Worker admission ends when execution reaches a terminal state, so it cannot bound
 long-lived READY downloads. Each BatchExecutionService now independently limits
-accepted, unreleased reader handles globally and for each BatchId.
+pending validations plus accepted, unreleased reader handles globally and for each BatchId.
 
 | Setting | Environment variable | Default |
 | --- | --- | ---: |
@@ -27,13 +27,16 @@ GET /api/v1/batches/{batch_id}/download retains X-DocuForge-Batch-Token authoriz
 2. Apply existing phase/output eligibility checks and reject an already-known
    unavailable archive (no retained result or no archive path).
 3. Check global and per-batch capacity.
-4. Open and validate the canonical archive descriptor, including ZIP structure/CRC
-   and path/descriptor stability.
-5. Create the reader-owned handle and register its unique pin.
+4. Reserve a unique provisional pin, then release the lock.
+5. Open and validate the canonical descriptor outside the lock, including ZIP
+   structure/CRC and path/descriptor stability.
+6. Reacquire the lock, recheck session identity and eligibility, and transfer the
+   validated reader to a handle retaining the same unique pin.
 
-The service's existing RLock covers the entire sequence through successful pin
-registration. Counts are derived from _active_downloads pin sets; no separate
-counter, provisional capacity reservation, queue or global singleton is added.
+The service's existing RLock covers admission/reservation and final promotion;
+it is released during opening and validation. Counts are derived from the same
+_active_downloads pin sets for provisional and accepted readers; no separate
+counter, queue or global singleton is added.
 
 Invalid capabilities and DELETING sessions retain private 404 batch_not_found.
 QUEUED, PROCESSING, CANCELLING and PACKAGING retain 409 batch_not_ready;
@@ -81,7 +84,8 @@ does not reopen the archive pathname.
 The handle closes its descriptor before releasing only its unique pin. Removing the
 last pin removes the empty set, so capacity is immediately reusable. Duplicate
 release is a no-op; expected close OSError logs a generic warning and still unpins.
-Constructor/registration failure closes the new reader and rolls back its own pin.
+Constructor failure closes the new reader and rolls back its own pin. Provisional
+registration failure rolls back its own pin before opening a reader.
 All existing response finally paths free capacity: completion, range/HEAD responses,
 construction errors, cancellation, receive disconnect, send failure and short reads.
 
@@ -90,8 +94,8 @@ construction errors, cancellation, receive disconnect, send failure and short re
 DELETE stays available at capacity. Tombstones hide new access immediately; accepted
 streams remain valid and physical deletion waits for their final pins. Unrelated
 unpinned sessions can expire normally. Acquisition, rejection and release do not
-extend terminal TTL. Graceful shutdown refuses new acquisition, drains accepted
-readers with the existing condition variable and releases durable ownership last.
+extend terminal TTL. Graceful shutdown refuses new acquisition, drains provisional
+and accepted readers with the existing condition variable and releases durable ownership last.
 
 Recovery continues to refuse an active reader with 409 batch_download_active.
 After the final release, existing recovery eligibility, worker admission and
@@ -107,8 +111,9 @@ Historical archives and rejected/failed acquisitions consume no slots. Process
 restart begins with no active HTTP readers; existing durable DELETING reconciliation
 still applies. SQLite schema remains v3, without persistent reader metadata.
 
-This policy bounds retained accepted descriptors. Permitted ZIP validation still
-runs under the service lock and can cause lock contention. It is not bandwidth
+This policy bounds provisional validations and retained accepted descriptors.
+Permitted ZIP validation runs outside the service lock but still consumes CPU,
+disk I/O, descriptors and memory. It is not bandwidth
 limiting, per-user or per-IP rate limiting, distributed leasing, or complete
 protection against slow-client resource use. No dependency or public success
 contract changes are introduced.
@@ -124,4 +129,14 @@ lifecycle, archive-integrity and execution-admission regressions remain required
 The production container independently emits PASS batch-download-admission using
 synthetic ZIPs, safe rejection before opening, unchanged durable state, immediate
 slot reuse, descriptor ZIP bytes/CRC, empty final pins and normal deletion.
-The complete production image must emit seventeen PASS markers.
+The complete production image must emit eighteen PASS markers, including the
+independently checked batch-download-validation-concurrency marker.
+
+## Pending validation
+
+Admission includes provisional validation pins as well as accepted streams. The
+capacity decision and provisional insertion occur atomically before filesystem
+opening. CRC validation runs outside the service lock; successful promotion keeps
+the same pin and descriptor with no capacity gap. Defaults, environment settings,
+private authorization and eligibility precedence, and the safe 503 remain unchanged.
+See [validation concurrency](mvp3-batch-download-validation-concurrency.md).

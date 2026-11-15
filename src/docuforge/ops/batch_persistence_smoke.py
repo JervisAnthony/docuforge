@@ -7,8 +7,10 @@ import io
 import os
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from threading import Event
 from time import monotonic, sleep
 from unittest.mock import patch
 from zipfile import ZipFile
@@ -185,6 +187,7 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
             _verify_archive_source_pinning(storage)
             _verify_download_descriptor_pinning(storage)
             _verify_download_admission(storage)
+            _verify_download_validation_concurrency(storage)
     except BatchPersistenceSmokeError:
         raise
     except (OSError, RuntimeError, ValueError) as error:
@@ -205,7 +208,91 @@ def run_batch_persistence_smoke() -> tuple[str, ...]:
         "batch-archive-source-pinning",
         "batch-download-descriptor-pinning",
         "batch-download-admission",
+        "batch-download-validation-concurrency",
     )
+
+
+def _verify_download_validation_concurrency(storage: Path) -> None:
+    """Prove lock responsiveness and bounded promotion using a real synthetic ZIP."""
+    from docuforge.api import batch_persistence as persistence
+
+    runner = BatchExecutionService(
+        office_engine_factory=LibreOfficeEngine, storage_directory=storage,
+        max_active_downloads=1, max_downloads_per_batch=1,
+    )
+    entered, finish = Event(), Event()
+    handles, readers = [], []
+    validator = persistence._archive_reader_is_valid
+
+    def validate(reader, result):
+        readers.append(reader)
+        entered.set()
+        if not finish.wait(10):
+            raise BatchPersistenceSmokeError("pending validation was not resumed")
+        return validator(reader, result)
+
+    def acquire(batch_id, token):
+        handle = runner.acquire_download(batch_id, token)
+        handles.append(handle)
+        return handle
+
+    try:
+        workspace = runner.create_workspace()
+        source = workspace.inputs_directory / "validation-smoke.png"
+        Image.new("RGB", (8, 8), "green").save(source)
+        request = BatchImageConvertRequest(
+            (BatchImageInput(source),), workspace.output_directory, "jpg", workspace.batch_id,
+        )
+        grant = runner.create_session(request, workspace)
+        batch_id, token = str(request.batch_id), grant.access_token
+        _wait_ready(runner, batch_id, token)
+        with (
+            patch.object(persistence, "_archive_reader_is_valid", side_effect=validate),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            pending = executor.submit(acquire, batch_id, token)
+            try:
+                if not entered.wait(10):
+                    raise BatchPersistenceSmokeError("descriptor validation did not start")
+                pins = set(runner._active_downloads.get(batch_id, ()))
+                if len(pins) != 1:
+                    raise BatchPersistenceSmokeError("validation did not reserve capacity")
+                status = executor.submit(runner.get, batch_id, token).result(timeout=5)
+                if status.phase is not BatchExecutionPhase.READY:
+                    raise BatchPersistenceSmokeError("status changed during validation")
+                with patch(
+                    "docuforge.api.batches._open_validated_download_archive",
+                    side_effect=BatchPersistenceSmokeError("excess validation opened archive"),
+                ):
+                    try:
+                        executor.submit(acquire, batch_id, token).result(timeout=5)
+                    except ApiError as error:
+                        if (error.status_code, error.code) != (
+                            503, "batch_download_capacity_exceeded",
+                        ):
+                            raise BatchPersistenceSmokeError("unsafe pending admission") from None
+                    else:
+                        raise BatchPersistenceSmokeError("pending capacity was exceeded")
+                finish.set()
+                handle = pending.result(timeout=10)
+                if handle.reader is not readers[0] or runner._active_downloads[batch_id] != pins:
+                    raise BatchPersistenceSmokeError("promotion replaced descriptor or pin")
+            finally:
+                finish.set()
+        with ZipFile(io.BytesIO(handle.read_chunk(0, handle.size_bytes))) as archive:
+            if archive.testzip() is not None or len(archive.namelist()) != 1:
+                raise BatchPersistenceSmokeError("promoted descriptor ZIP was invalid")
+        handle.release()
+        if runner._active_downloads or not readers[0].closed:
+            raise BatchPersistenceSmokeError("provisional capacity did not drain")
+        runner.delete_session(batch_id, token)
+        if workspace.path.exists():
+            raise BatchPersistenceSmokeError("provisional validation prevented final deletion")
+    finally:
+        finish.set()
+        for handle in handles:
+            handle.release()
+        runner.shutdown()
 
 
 def _verify_download_admission(storage: Path) -> None:

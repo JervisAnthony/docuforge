@@ -10,8 +10,9 @@ validated ZIP from the transmitted file.
 ## Acquisition and ownership
 
 Under the service lock, acquisition rejects shutdown, authorizes the capability,
-and applies existing phase/result eligibility before opening or scanning any
-archive. Wrong or missing capabilities retain private `404 batch_not_found`.
+and applies existing phase/result eligibility and bounded provisional admission
+before releasing the lock to open or scan any archive. Wrong or missing
+capabilities retain private `404 batch_not_found`.
 Capability verification also precedes expiry cleanup and its filesystem/persistence
 writes; authorized access and the idle sweeper retain the existing expiry rules.
 Only the canonical `workspace.archive_path` is accepted. The internal
@@ -24,8 +25,9 @@ The shared `_archive_reader_is_valid` opens `ZipFile` on that reader. It verifie
 exact ordered result-member names, uniqueness, no directories/encryption, DEFLATED
 compression, structure and CRC. Closing the ZIP wrapper preserves the underlying
 reader. Descriptor metadata, original path identity and ancestry are checked again
-after validation; the reader is rewound to zero. Only then does the service create
-the handle and register its unique active pin. There is one full CRC scan per
+after validation; the reader is rewound to zero. Only then does the service recheck
+session identity and eligibility under the lock and create a handle retaining its
+original provisional pin. There is one full CRC scan per
 acquisition. The compatibility `archive_is_valid(path, result, workspace)` uses
 the same helper but closes its reader rather than transferring ownership.
 
@@ -117,4 +119,12 @@ Reader admission is bounded independently from execution admission: defaults are
 eight globally and four per batch. Capability and phase/output checks precede the
 safe 503 capacity error; the gate precedes descriptor opening and CRC validation.
 Accepted descriptors, streaming success contracts and cleanup paths are unchanged.
-Validation still holds the service lock. See [download admission](mvp3-batch-download-admission.md).
+Validation runs outside the service lock. See [download admission](mvp3-batch-download-admission.md).
+
+## Off-lock descriptor acquisition
+
+ZIP structure/CRC validation now runs outside the service lock after bounded
+provisional admission. Promotion rechecks session identity, attempt, result, archive
+and eligibility under the lock, then transfers the original validated reader to
+the handle without reopening or a second scan. Failure closes before unpinning.
+See [validation concurrency](mvp3-batch-download-validation-concurrency.md).
