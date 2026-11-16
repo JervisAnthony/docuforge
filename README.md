@@ -214,8 +214,11 @@ MVP1 uses a split production deployment:
 See [`docs/deployment.md`](docs/deployment.md) for environment configuration and [`docs/production-verification.md`](docs/production-verification.md) for live smoke verification.
 
 The manual **Production Smoke** workflow verifies the deployed release identity before exercising
-the public frontend, system contracts, runtime capabilities, PDF/image workflows, Office
-DOCX-to-PDF, and OCR image-to-text.
+the public frontend, system contracts, runtime capabilities, all ten MVP1 PDF/image workflows,
+Office DOCX-to-PDF, and OCR image-to-text: [seventeen semantic checks](docs/production-verification.md).
+Version matching verifies semantic consistency rather than exact deployed commit identity.
+Public smoke, manual browser acceptance, hard-refresh and dogfood evidence remain separate
+release gates; this coverage does not declare MVP1 launched.
 
 ## Release quality
 
