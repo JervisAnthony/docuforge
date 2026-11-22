@@ -1,6 +1,6 @@
 """System-level routes for API metadata, liveness, and readiness."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 
 from docuforge.api.capabilities import probe_runtime_capabilities
 from docuforge.api.config import ApiSettings
@@ -8,10 +8,12 @@ from docuforge.api.ocr import OcrEngineFactory
 from docuforge.api.office import OfficeEngineFactory
 from docuforge.api.schemas import (
     ApiMetadataResponse,
+    BuildIdentityResponse,
     HealthResponse,
     ReadinessResponse,
     RuntimeCapabilitiesResponse,
 )
+from docuforge.build_identity import read_identity
 
 
 def create_system_router(
@@ -23,6 +25,12 @@ def create_system_router(
 ) -> APIRouter:
     """Build system routes bound to immutable application settings."""
     router = APIRouter()
+    build_identity = BuildIdentityResponse.model_validate(read_identity())
+
+    @router.get("/build", response_model=BuildIdentityResponse)
+    async def build(response: Response) -> BuildIdentityResponse:
+        response.headers["Cache-Control"] = "no-store"
+        return build_identity
 
     @router.get(metadata_path, response_model=ApiMetadataResponse)
     async def api_metadata() -> ApiMetadataResponse:

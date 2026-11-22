@@ -35,7 +35,23 @@ jobs:
       - name: Test frontend
         run: npm run test
       - name: Build frontend
+        env:
+          DOCUFORGE_BUILD_REVISION: ${{ github.sha }}
         run: npm run build
+      - name: Verify built frontend identity
+        env:
+          DOCUFORGE_TEST_REVISION: ${{ github.sha }}
+        run: |
+          node --input-type=module -e '
+          import { readFileSync } from "node:fs";
+          import assert from "node:assert/strict";
+          const stamp = JSON.parse(readFileSync("dist/build-info.json", "utf8"));
+          const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+          assert.deepEqual(stamp, {schema_version: 1, service: "docuforge-frontend", version: pkg.version, revision: process.env.DOCUFORGE_TEST_REVISION});
+          const html = readFileSync("dist/index.html", "utf8");
+          assert.ok(html.includes(`name="docuforge-revision" content="${stamp.revision}"`));
+          assert.ok(html.includes(`name="docuforge-version" content="${stamp.version}"`));
+          '
 
   e2e:
     name: Full-stack E2E (Chromium)
@@ -152,7 +168,9 @@ jobs:
       - name: Install build tooling
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "build>=1.2"
+          python -m pip install "build>=1.2" "setuptools>=77" wheel pytest
+      - name: Verify stamped and unstamped installed artifacts
+        run: python -m pytest tests/ops/test_build_artifacts.py -v
       - name: Build source distribution and wheel
         run: python -m build
       - name: Verify distributions
@@ -173,7 +191,22 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
       - name: Build production image
-        run: docker build -t docuforge-runtime-ci .
+        env:
+          DOCUFORGE_TEST_REVISION: ${{ github.sha }}
+        run: docker build --build-arg DOCUFORGE_BUILD_REVISION="$DOCUFORGE_TEST_REVISION" -t docuforge-runtime-ci .
+      - name: Verify packaged build identity as non-root
+        env:
+          DOCUFORGE_TEST_REVISION: ${{ github.sha }}
+        run: >-
+          docker run --rm
+          -e DOCUFORGE_BUILD_REVISION=ffffffffffffffffffffffffffffffffffffffff
+          -e RAILWAY_GIT_COMMIT_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+          docuforge-runtime-ci python -c
+          'import os, sys; from docuforge.build_identity import identity, read_identity;
+          from docuforge.version import package_version;
+          assert os.getuid() != 0;
+          assert read_identity() == identity(package_version(), sys.argv[1])'
+          "$DOCUFORGE_TEST_REVISION"
       - name: Verify production engines
         run: docker run --rm docuforge-runtime-ci python -m docuforge.ops.runtime_smoke
       - name: Verify durable batch restart

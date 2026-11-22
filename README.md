@@ -196,6 +196,7 @@ System endpoints:
 - `GET /api/v1` — API metadata
 - `GET /api/v1/health` — liveness
 - `GET /api/v1/ready` — readiness
+- `GET /api/v1/build` — packaged build identity (`no-store`; local revision may be null)
 - `GET /api/v1/capabilities` — Office and OCR runtime availability
 
 Interactive documentation is available at `/docs` and `/redoc` in environments where API docs are enabled.
@@ -216,7 +217,10 @@ See [`docs/deployment.md`](docs/deployment.md) for environment configuration and
 The manual **Production Smoke** workflow verifies the deployed release identity before exercising
 the public frontend, system contracts, runtime capabilities, all ten MVP1 PDF/image workflows,
 Office DOCX-to-PDF, and OCR image-to-text: [seventeen semantic checks](docs/production-verification.md).
-Version matching verifies semantic consistency rather than exact deployed commit identity.
+Strict identity verification requires separate expected API and frontend Git revisions,
+and checks frontend HTML consistency before the seventeen semantic checks. See
+[build inputs, provider settings and strict CLI usage](docs/deployed-build-identity.md).
+This is reported diagnostic metadata, not cryptographic provenance.
 Public smoke, manual browser acceptance, hard-refresh and dogfood evidence remain separate
 release gates; this coverage does not declare MVP1 launched.
 
