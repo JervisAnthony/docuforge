@@ -622,6 +622,34 @@ def test_workflow_summary_is_fail_closed(monkeypatch, tmp_path, scenario):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DOCUFORGE_FRONTEND_URL", "https://app.example.com")
     monkeypatch.setenv("DOCUFORGE_API_URL", "https://api.example.com")
+    monkeypatch.setenv("DOCUFORGE_EXPECTED_API_REVISION", "a" * 40)
+    monkeypatch.setenv("DOCUFORGE_EXPECTED_FRONTEND_REVISION", "b" * 40)
+    (tmp_path / "release-identity.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "mode": "strict",
+                "result": "PASS",
+                "expected_version": "0.1.0",
+                "components": {
+                    "api": {
+                        "origin": "https://api.example.com",
+                        "expected_revision": "a" * 40,
+                        "observed_revision": "a" * 40,
+                        "observed_version": "0.1.0",
+                        "outcome": "PASS",
+                    },
+                    "frontend": {
+                        "origin": "https://app.example.com",
+                        "expected_revision": "b" * 40,
+                        "observed_revision": "b" * 40,
+                        "observed_version": "0.1.0",
+                        "outcome": "PASS",
+                    },
+                },
+            }
+        )
+    )
     monkeypatch.setenv(
         "IDENTITY_OUTCOME", "failure" if scenario == "identity-failed" else "success"
     )

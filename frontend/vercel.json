@@ -3,7 +3,12 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "headers": [
+    { "source": "/build-info.json", "headers": [
+      { "key": "Cache-Control", "value": "no-store" }
+    ] }
+  ],
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/((?!build-info\\.json$).*)", "destination": "/index.html" }
   ]
 }

@@ -3,8 +3,11 @@
 After Vercel and Railway are public, run the DocuForge production verifier with the two HTTPS origins.
 
 The repository includes a manually triggered **Production Smoke** GitHub Actions workflow. It
-first confirms that Railway reports the same semantic release version as the checked-out
-package, then runs **seventeen** ordered checks. The authoritative identifiers live in
+first verifies independently expected API and frontend build revisions, API readiness and
+release version, and frontend HTML consistency, then runs **seventeen** ordered semantic
+checks. Both HTTPS origins and both full expected revisions are required workflow inputs.
+See [build identity setup and exact CLI usage](deployed-build-identity.md).
+The authoritative semantic identifiers live in
 `SMOKE_CHECKS` in `src/docuforge/ops/deployment_smoke.py`:
 
 | # | Check | Required semantics |
@@ -45,9 +48,13 @@ job summary even after failure, including public origins, expected version, atte
 count, passed identifiers, overall result and workflow run URL. Missing or incomplete evidence
 cannot report overall PASS.
 
-The release-identity command proves semantic version consistency only. It does not prove that
-the API or frontend serves the exact checked-out Git commit; exact revision attestation requires
-a separate build/deployment identity mechanism. No such mechanism is added here.
+The strict release-identity command compares each component's reported build revision with
+its own explicitly expected revision. It also compares frontend manifest and HTML metadata.
+This diagnostic mechanism is not cryptographic attestation or reproducible-build provenance.
+Legacy semantic-only use explicitly reports that revisions were not verified. Strict identity
+is a separate prerequisite and does not change the seventeen-check count or eighteen image
+runtime/durable markers. The always-run summary includes expected/observed component revisions
+and identity outcome; skipped/failed verification and missing/malformed evidence cannot PASS.
 
 Ordinary CI uses synthetic doubles and a local FastAPI TestClient integration test exercising
 all ten MVP1 requests with real converters and no external network. Office and OCR remain

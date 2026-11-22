@@ -2,7 +2,16 @@
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class BuildIdentityResponse(BaseModel):
+    """Build-provided diagnostic identity; an unstamped artifact is unknown."""
+
+    schema_version: int = Field(strict=True, ge=1, le=1)
+    service: Literal["docuforge"]
+    version: str
+    revision: str | None
 
 
 class ApiMetadataResponse(BaseModel):

@@ -24,10 +24,14 @@ RUN groupadd --gid 10001 docuforge \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml setup.py README.md LICENSE ./
 COPY src ./src
 
 RUN python -m pip install --no-cache-dir --upgrade pip
+# ARG without a default preserves the distinction between absent and blank input.
+# Setuptools generates the resource in the wheel before pip installs it.
+ARG DOCUFORGE_BUILD_REVISION
+ARG RAILWAY_GIT_COMMIT_SHA
 RUN python -m pip install --no-cache-dir ".[web]"
 
 EXPOSE 8000

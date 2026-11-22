@@ -53,6 +53,12 @@ docuforge = "docuforge.__main__:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.package-data]
+docuforge = ["_build_identity.json"]
+
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

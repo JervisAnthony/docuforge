@@ -11,6 +11,14 @@ on:
         description: Public Railway API origin
         required: true
         type: string
+      expected_api_revision:
+        description: Full Git SHA independently expected on the API deployment
+        required: true
+        type: string
+      expected_frontend_revision:
+        description: Full Git SHA independently expected on the frontend deployment
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -27,6 +35,8 @@ jobs:
     env:
       DOCUFORGE_FRONTEND_URL: ${{ inputs.frontend_url }}
       DOCUFORGE_API_URL: ${{ inputs.api_url }}
+      DOCUFORGE_EXPECTED_API_REVISION: ${{ inputs.expected_api_revision }}
+      DOCUFORGE_EXPECTED_FRONTEND_REVISION: ${{ inputs.expected_frontend_revision }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -45,6 +55,10 @@ jobs:
         run: >-
           python -m docuforge.ops.release_identity
           --api-url "$DOCUFORGE_API_URL"
+          --frontend-url "$DOCUFORGE_FRONTEND_URL"
+          --expected-api-revision "$DOCUFORGE_EXPECTED_API_REVISION"
+          --expected-frontend-revision "$DOCUFORGE_EXPECTED_FRONTEND_REVISION"
+          --report-json release-identity.json
           --timeout 20
       - name: Verify public deployment
         id: smoke
@@ -61,44 +75,6 @@ jobs:
           SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
         run: |
           python - <<'PY'
-          import html
-          import json
-          import os
-          from pathlib import Path
-          from docuforge.ops.deployment_smoke import (
-              SMOKE_CHECKS, DeploymentSmokeError, _normalize_public_url,
-          )
-          from docuforge.version import package_version
-
-          report_path = Path("production-smoke.json")
-          report = json.loads(report_path.read_text()) if report_path.exists() else {}
-          def safe_origin(key):
-              try:
-                  return html.escape(_normalize_public_url(os.environ[key], label="origin"))
-              except (DeploymentSmokeError, ValueError):
-                  return "Invalid origin (omitted)"
-          passed = report.get("passed_checks", [])
-          success = (
-              os.environ["IDENTITY_OUTCOME"] == "success"
-              and os.environ["SMOKE_OUTCOME"] == "success"
-              and report.get("result") == "PASS"
-              and passed == list(SMOKE_CHECKS)
-          )
-          run_url = (
-              f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}'
-              f'/actions/runs/{os.environ["GITHUB_RUN_ID"]}'
-          )
-          lines = [
-              "## Public Production Smoke",
-              f'Overall: {"PASS" if success else "FAIL"}',
-              f'Frontend origin: {safe_origin("DOCUFORGE_FRONTEND_URL")}',
-              f'API origin: {safe_origin("DOCUFORGE_API_URL")}',
-              f"Expected semantic release version: {package_version()}",
-              f'Checks executed: {report.get("checks_executed", 0)} / {len(SMOKE_CHECKS)}',
-              f"Passed checks: {', '.join(passed) or 'None'}",
-              f"Workflow run: {run_url}",
-              "Version consistency does not attest exact deployed Git revisions.",
-          ]
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-              summary.write("\n\n".join(lines) + "\n")
+          from docuforge.ops.production_summary import main
+          main()
           PY

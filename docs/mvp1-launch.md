@@ -8,7 +8,7 @@ DocuForge MVP1 is release `0.1.0`. Feature development for this milestone is com
 2. Deploy the Railway API from `main` and confirm `/api/v1/ready` and `/api/v1/health`. ✅
 3. Deploy the Vercel frontend from `frontend/` with `VITE_API_BASE_URL` pointing at Railway. ✅
 4. Allow the exact Vercel production origin in Railway CORS configuration. ✅
-5. Run the manual **Production Smoke** GitHub Actions workflow with both public HTTPS origins and require all seventeen checks, covering all ten MVP1 tools plus system, Office and OCR verification. ⏳
+5. Run the manual **Production Smoke** GitHub Actions workflow with both public HTTPS origins and separate expected API/frontend revisions; require strict identity and all seventeen semantic checks, covering all ten MVP1 tools plus system, Office and OCR verification. ⏳
 6. Require the release-identity check to confirm Railway is serving `0.1.0`. ✅ Manual verification completed; automated Production Smoke remains pending.
 7. Run one PDF workflow and one image workflow in the browser and open both downloads. ✅
 8. Hard-refresh the deployed application and confirm the catalog reconnects normally. ⏳
@@ -46,8 +46,10 @@ See [`mvp1-launch-record.md`](mvp1-launch-record.md) for the current launch evid
 ## Complete public smoke gate
 
 Use the [complete seventeen-check matrix](production-verification.md). Record the workflow run
-URL, origins, expected/observed semantic version, count and result in the launch record. Version
-consistency does not attest the exact deployed Git revision. Repository CI and local Docker
+URL, origins, expected/observed semantic version and separate component revisions, identity
+outcome, semantic count and result in the launch record. Rebuild/redeploy older unstamped
+artifacts before this strict gate can pass; see [build identity](deployed-build-identity.md).
+Historical manual version acceptance above remains semantic-only evidence. Repository CI and local Docker
 verification are separate evidence; neither completes this public gate. API checks do not replace
 manual browser acceptance, hard-refresh verification or dogfooding. The public smoke, hard-refresh,
 dogfood and release-tag gates remain pending until independently verified; no launch is declared
