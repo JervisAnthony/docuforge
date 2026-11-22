@@ -8,16 +8,49 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from io import BytesIO
+from pathlib import Path
 from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from uuid import uuid4
+from zipfile import ZipFile
 
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
 from docuforge.ops.runtime_smoke import make_synthetic_docx, make_synthetic_ocr_png
+
+MAX_RESPONSE_BYTES = 10 * 1024 * 1024
+MAX_ZIP_MEMBER_BYTES = 2 * 1024 * 1024
+MAX_ZIP_TOTAL_BYTES = 6 * 1024 * 1024
+
+SMOKE_CHECKS = (
+    "frontend",
+    "readiness",
+    "runtime-capabilities",
+    "liveness-and-headers",
+    "cors",
+    "pdf-merge",
+    "pdf-split",
+    "pdf-rotate",
+    "pdf-remove-pages",
+    "pdf-extract-pages",
+    "pdf-to-images",
+    "image-convert",
+    "image-resize",
+    "image-compression",
+    "images-to-pdf",
+    "office-docx-to-pdf",
+    "ocr-image-to-text",
+)
+
+
+def _bounded_response_read(response) -> bytes:
+    body = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(body) > MAX_RESPONSE_BYTES:
+        raise DeploymentSmokeError("response exceeds smoke size limit")
+    return body
 
 
 class DeploymentSmokeError(RuntimeError):
@@ -62,16 +95,17 @@ def request_http(
             return HttpResponse(
                 status_code=response.status,
                 headers={name.lower(): value for name, value in response.headers.items()},
-                body=response.read(),
+                body=_bounded_response_read(response),
             )
     except HTTPError as error:
-        return HttpResponse(
-            status_code=error.code,
-            headers={name.lower(): value for name, value in error.headers.items()},
-            body=error.read(),
-        )
+        with error:
+            return HttpResponse(
+                status_code=error.code,
+                headers={name.lower(): value for name, value in error.headers.items()},
+                body=_bounded_response_read(error),
+            )
     except URLError as error:
-        raise DeploymentSmokeError(f"request to {url} failed: {error.reason}") from error
+        raise DeploymentSmokeError("HTTP transport failed") from error
 
 
 def _normalize_public_url(value: str, *, label: str) -> str:
@@ -122,9 +156,9 @@ def _make_pdf(*widths: int) -> bytes:
     return buffer.getvalue()
 
 
-def _make_png() -> bytes:
+def _make_png(size: tuple[int, int] = (96, 64)) -> bytes:
     buffer = BytesIO()
-    image = Image.new("RGB", (96, 64), (42, 106, 174))
+    image = Image.new("RGB", size, (42, 106, 174))
     image.save(buffer, format="PNG")
     return buffer.getvalue()
 
@@ -152,8 +186,7 @@ def _multipart_body(
             (
                 f"--{boundary}\r\n".encode(),
                 (
-                    f'Content-Disposition: form-data; name="{name}"; '
-                    f'filename="{filename}"\r\n'
+                    f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
                 ).encode(),
                 f"Content-Type: {content_type}\r\n\r\n".encode(),
                 payload,
@@ -163,6 +196,95 @@ def _multipart_body(
 
     chunks.append(f"--{boundary}--\r\n".encode())
     return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
+
+
+def _download(response: HttpResponse, media_type: str) -> None:
+    _require_status(response, label="download")
+    if (_header(response, "Content-Type") or "").split(";")[0].strip().lower() != media_type:
+        raise DeploymentSmokeError(f"incorrect media type; expected {media_type}")
+    # Check naming when supplied; some proxies may omit Content-Disposition.
+    disposition = _header(response, "Content-Disposition")
+    if disposition is not None:
+        from email.message import Message
+
+        message = Message()
+        message["Content-Disposition"] = disposition
+        name = message.get_filename()
+        if message.get_content_disposition() != "attachment" or not name or not _safe_name(name):
+            raise DeploymentSmokeError("unsafe download filename")
+
+
+def _safe_name(name: str) -> bool:
+    return (
+        bool(name)
+        and not any(c in name for c in "/\\:")
+        and name not in {".", ".."}
+        and all(ord(c) >= 32 and ord(c) != 127 for c in name)
+    )
+
+
+def _pdf_pages(payload: bytes):
+    try:
+        reader = PdfReader(BytesIO(payload), strict=True)
+        if reader.is_encrypted or not reader.pages:
+            raise ValueError
+        return list(reader.pages)
+    except Exception as error:
+        raise DeploymentSmokeError("invalid PDF") from error
+
+
+def _pdf_order(payload: bytes, expected: tuple[int, ...], rotations=None) -> None:
+    pages = _pdf_pages(payload)
+    if [float(page.mediabox.width) for page in pages] != list(expected):
+        raise DeploymentSmokeError("unexpected page order")
+    if rotations is not None and [page.rotation for page in pages] != list(rotations):
+        raise DeploymentSmokeError("incorrect page rotations")
+
+
+def _image(payload: bytes, expected_format: str, size: tuple[int, int]) -> None:
+    try:
+        with Image.open(BytesIO(payload)) as image:
+            if image.format != expected_format:
+                raise DeploymentSmokeError("incorrect image format")
+            if image.size != size:
+                raise DeploymentSmokeError("incorrect output dimensions")
+            image.load()
+    except DeploymentSmokeError:
+        raise
+    except Exception as error:
+        raise DeploymentSmokeError("invalid image") from error
+
+
+def _zip_members(payload: bytes, expected: tuple[str, ...]) -> tuple[bytes, ...]:
+    try:
+        with ZipFile(BytesIO(payload)) as archive:
+            members = archive.infolist()
+            if any(
+                not _safe_name(member.filename) or member.is_dir() or member.flag_bits & 1
+                for member in members
+            ):
+                raise DeploymentSmokeError("unsafe ZIP member")
+            if tuple(member.filename for member in members) != expected:
+                raise DeploymentSmokeError("unexpected ZIP member order")
+            if any(member.file_size > MAX_ZIP_MEMBER_BYTES for member in members):
+                raise DeploymentSmokeError("ZIP member exceeds smoke size limit")
+            if sum(member.file_size for member in members) > MAX_ZIP_TOTAL_BYTES:
+                raise DeploymentSmokeError("ZIP total exceeds smoke size limit")
+            contents = []
+            for member in members:
+                with archive.open(member) as stream:
+                    data = stream.read(MAX_ZIP_MEMBER_BYTES + 1)
+                    if len(data) > MAX_ZIP_MEMBER_BYTES or len(data) != member.file_size:
+                        raise DeploymentSmokeError("ZIP member exceeds smoke size limit")
+                    # Reading through EOF verifies CRC without an unbounded testzip() pass.
+                    if stream.read(1):
+                        raise DeploymentSmokeError("ZIP member exceeds smoke size limit")
+                    contents.append(data)
+            return tuple(contents)
+    except DeploymentSmokeError:
+        raise
+    except Exception as error:
+        raise DeploymentSmokeError("invalid ZIP or CRC") from error
 
 
 class ProductionSmokeRunner:
@@ -182,25 +304,22 @@ class ProductionSmokeRunner:
         self.api_url = _normalize_public_url(api_url, label="API URL")
         self.timeout = timeout
         self._requester = requester
+        self.passed_checks: list[str] = []
 
     def run(self) -> tuple[str, ...]:
         """Run all production checks and return their stable names on success."""
-        checks = (
-            ("frontend", self._check_frontend),
-            ("readiness", self._check_readiness),
-            ("runtime-capabilities", self._check_runtime_capabilities),
-            ("liveness-and-headers", self._check_liveness_and_headers),
-            ("cors", self._check_cors),
-            ("pdf-merge", self._check_pdf_merge),
-            ("image-compression", self._check_image_compression),
-            ("office-docx-to-pdf", self._check_office_docx_to_pdf),
-            ("ocr-image-to-text", self._check_ocr_image_to_text),
-        )
-        passed: list[str] = []
-        for name, check in checks:
-            check()
-            passed.append(name)
-        return tuple(passed)
+        self.passed_checks.clear()
+        for name in SMOKE_CHECKS:
+            try:
+                getattr(self, f"_check_{name.replace('-', '_')}")()
+            except DeploymentSmokeError as error:
+                raise DeploymentSmokeError(f"{name}: {error}") from error
+            except Exception as error:
+                raise DeploymentSmokeError(
+                    f"{name}: invalid response or transport failure"
+                ) from error
+            self.passed_checks.append(name)
+        return tuple(self.passed_checks)
 
     def _request(
         self,
@@ -210,13 +329,96 @@ class ProductionSmokeRunner:
         headers: Mapping[str, str] | None = None,
         body: bytes | None = None,
     ) -> HttpResponse:
-        return self._requester(
+        response = self._requester(
             method,
             url,
             headers=headers,
             body=body,
             timeout=self.timeout,
         )
+        if len(response.body) > MAX_RESPONSE_BYTES:
+            raise DeploymentSmokeError("response exceeds smoke size limit")
+        return response
+
+    def _post(self, path: str, *, fields=(), files=()) -> HttpResponse:
+        body, content_type = _multipart_body(fields=fields, files=files)
+        return self._request(
+            "POST",
+            self._api_endpoint(path),
+            headers={"Content-Type": content_type},
+            body=body,
+        )
+
+    def _pdf_operation(self, operation: str, *, fields=(), media_type="application/pdf"):
+        response = self._post(
+            f"/api/v1/pdf/{operation}",
+            fields=fields,
+            files=(("file", "report.pdf", _make_pdf(100, 200, 300), "application/pdf"),),
+        )
+        _download(response, media_type)
+        return response.body
+
+    def _check_pdf_split(self) -> None:
+        payload = self._pdf_operation("split", media_type="application/zip")
+        names = tuple(f"report-page-{number:04d}.pdf" for number in range(1, 4))
+        for member, width in zip(_zip_members(payload, names), (100, 200, 300), strict=True):
+            _pdf_order(member, (width,))
+
+    def _check_pdf_rotate(self) -> None:
+        payload = self._pdf_operation("rotate", fields=(("rotate", "1:90"), ("rotate", "2:180")))
+        _pdf_order(payload, (100, 200, 300), (90, 180, 0))
+
+    def _check_pdf_remove_pages(self) -> None:
+        payload = self._pdf_operation("remove-pages", fields=(("page", "2"),))
+        _pdf_order(payload, (100, 300))
+
+    def _check_pdf_extract_pages(self) -> None:
+        payload = self._pdf_operation("extract-pages", fields=(("page", "3"), ("page", "1")))
+        _pdf_order(payload, (300, 100))
+
+    def _check_pdf_to_images(self) -> None:
+        payload = self._pdf_operation(
+            "to-images",
+            fields=(("format", "png"), ("dpi", "72")),
+            media_type="application/zip",
+        )
+        names = tuple(f"report-page-{number:04d}.png" for number in range(1, 4))
+        for member, width in zip(_zip_members(payload, names), (100, 200, 300), strict=True):
+            _image(member, "PNG", (width, 120))
+
+    def _check_image_convert(self) -> None:
+        response = self._post(
+            "/api/v1/images/convert",
+            fields=(("format", "jpeg"),),
+            files=(("file", "source.png", _make_png(), "image/png"),),
+        )
+        _download(response, "image/jpeg")
+        _image(response.body, "JPEG", (96, 64))
+
+    def _check_image_resize(self) -> None:
+        response = self._post(
+            "/api/v1/images/resize",
+            fields=(("format", "png"), ("max_width", "48")),
+            files=(("file", "source.png", _make_png(), "image/png"),),
+        )
+        _download(response, "image/png")
+        _image(response.body, "PNG", (48, 32))
+
+    def _check_images_to_pdf(self) -> None:
+        response = self._post(
+            "/api/v1/images/to-pdf",
+            files=(
+                ("files", "landscape.png", _make_png(), "image/png"),
+                ("files", "portrait.png", _make_png((40, 80)), "image/png"),
+            ),
+        )
+        _download(response, "application/pdf")
+        pages = _pdf_pages(response.body)
+        if len(pages) != 2 or not (
+            pages[0].mediabox.width > pages[0].mediabox.height
+            and pages[1].mediabox.width < pages[1].mediabox.height
+        ):
+            raise DeploymentSmokeError("incorrect page orientation or order")
 
     def _api_endpoint(self, path: str) -> str:
         return f"{self.api_url}{path}"
@@ -292,9 +494,7 @@ class ProductionSmokeRunner:
         if _header(response, "Access-Control-Allow-Origin") != self.frontend_url:
             raise DeploymentSmokeError("CORS preflight did not allow the frontend origin")
         allowed_headers = _header(response, "Access-Control-Allow-Headers") or ""
-        if "x-request-id" not in {
-            part.strip().lower() for part in allowed_headers.split(",")
-        }:
+        if "x-request-id" not in {part.strip().lower() for part in allowed_headers.split(",")}:
             raise DeploymentSmokeError("CORS preflight did not allow X-Request-ID")
 
     def _check_pdf_merge(self) -> None:
@@ -311,6 +511,7 @@ class ProductionSmokeRunner:
             body=body,
         )
         _require_status(response, label="PDF merge workflow")
+        _download(response, "application/pdf")
         try:
             reader = PdfReader(BytesIO(response.body), strict=True)
             widths = [round(float(page.mediabox.width)) for page in reader.pages]
@@ -331,6 +532,7 @@ class ProductionSmokeRunner:
             body=body,
         )
         _require_status(response, label="image compression workflow")
+        _download(response, "image/jpeg")
         try:
             with Image.open(BytesIO(response.body)) as image:
                 image.load()
@@ -347,12 +549,14 @@ class ProductionSmokeRunner:
 
     def _check_office_docx_to_pdf(self) -> None:
         body, content_type = _multipart_body(
-            files=((
-                "file",
-                "runtime-smoke.docx",
-                make_synthetic_docx(),
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            ),)
+            files=(
+                (
+                    "file",
+                    "runtime-smoke.docx",
+                    make_synthetic_docx(),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ),
+            )
         )
         response = self._request(
             "POST",
@@ -361,6 +565,7 @@ class ProductionSmokeRunner:
             body=body,
         )
         _require_status(response, label="Office DOCX-to-PDF workflow")
+        _download(response, "application/pdf")
         if "application/pdf" not in (_header(response, "Content-Type") or "").lower():
             raise DeploymentSmokeError("Office workflow did not return application/pdf")
         if not response.body.startswith(b"%PDF-"):
@@ -383,6 +588,7 @@ class ProductionSmokeRunner:
             body=body,
         )
         _require_status(response, label="OCR image-to-text workflow")
+        _download(response, "text/plain")
         if "text/plain" not in (_header(response, "Content-Type") or "").lower():
             raise DeploymentSmokeError("OCR workflow did not return text/plain")
         try:
@@ -398,22 +604,47 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--frontend-url", required=True, help="Public Vercel frontend origin")
     parser.add_argument("--api-url", required=True, help="Public Railway API origin")
-    parser.add_argument("--timeout", type=float, default=45.0, help="Per-request timeout in seconds")
+    parser.add_argument(
+        "--timeout", type=float, default=45.0, help="Per-request timeout in seconds"
+    )
+    parser.add_argument(
+        "--report-json", type=Path, help="Write safe check evidence for a job summary"
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run production deployment verification from the command line."""
     arguments = build_parser().parse_args(argv)
+    runner = None
+    failure = None
+    success = False
     try:
-        checks = ProductionSmokeRunner(
+        runner = ProductionSmokeRunner(
             frontend_url=arguments.frontend_url,
             api_url=arguments.api_url,
             timeout=arguments.timeout,
-        ).run()
+        )
+        checks = runner.run()
+        success = checks == SMOKE_CHECKS
     except DeploymentSmokeError as error:
+        failure = str(error)
         print(f"FAIL {error}", file=sys.stderr)
         return 1
+    finally:
+        if arguments.report_json:
+            passed = runner.passed_checks if runner else []
+            arguments.report_json.write_text(
+                json.dumps(
+                    {
+                        "result": "PASS" if success else "FAIL",
+                        "passed_checks": passed,
+                        "checks_executed": len(passed) + (1 if failure and runner else 0),
+                        "expected_count": len(SMOKE_CHECKS),
+                    }
+                ),
+                encoding="utf-8",
+            )
 
     for check in checks:
         print(f"PASS {check}")

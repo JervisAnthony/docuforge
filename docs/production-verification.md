@@ -3,20 +3,63 @@
 After Vercel and Railway are public, run the DocuForge production verifier with the two HTTPS origins.
 
 The repository includes a manually triggered **Production Smoke** GitHub Actions workflow. It
-first confirms that Railway reports the same release version as the checked-out code, then checks:
+first confirms that Railway reports the same semantic release version as the checked-out
+package, then runs **seventeen** ordered checks. The authoritative identifiers live in
+`SMOKE_CHECKS` in `src/docuforge/ops/deployment_smoke.py`:
 
-1. frontend availability
-2. API readiness
-3. LibreOffice and Tesseract runtime capabilities
-4. liveness, response headers, and browser CORS behavior
-5. PDF merge semantics
-6. image compression semantics
-7. Office DOCX-to-PDF execution
-8. OCR image-to-text execution
+| # | Check | Required semantics |
+| --- | --- | --- |
+| 1 | `frontend` | HTML identifying DocuForge |
+| 2 | `readiness` | Ready DocuForge service and nonempty version |
+| 3 | `runtime-capabilities` | Office and OCR available |
+| 4 | `liveness-and-headers` | Healthy API, security headers, request ID and CORS exposure |
+| 5 | `cors` | Configured frontend origin and request-ID preflight |
+| 6 | `pdf-merge` | PDF widths 100, 200 in upload order |
+| 7 | `pdf-split` | Three ordered single-page PDFs with widths 100, 200, 300 |
+| 8 | `pdf-rotate` | Original page order and rotations 90, 180, 0 |
+| 9 | `pdf-remove-pages` | Surviving widths 100, 300 |
+| 10 | `pdf-extract-pages` | Requested widths 300, 100 in that order |
+| 11 | `pdf-to-images` | Three ordered PNGs at 72 DPI, sizes 100/200/300 by 120 |
+| 12 | `image-convert` | Actual JPEG, 96 by 64 |
+| 13 | `image-resize` | Actual PNG, 48 by 32, preserving aspect ratio |
+| 14 | `image-compression` | Actual JPEG, original 96 by 64 dimensions |
+| 15 | `images-to-pdf` | Two PDF pages, landscape then portrait |
+| 16 | `office-docx-to-pdf` | Parseable nonempty PDF |
+| 17 | `ocr-image-to-text` | Valid UTF-8 plain text |
 
-Every conversion check uses a small generated, non-sensitive fixture. The Office result must be a
-parseable PDF and the OCR result must be valid UTF-8; OCR text is not benchmarked for exact
-recognition.
+This covers all ten MVP1 API operations plus the frontend, readiness, runtime capabilities,
+health/security headers, browser CORS, Office and OCR. Every conversion uses small generated,
+non-sensitive fixtures in memory. Expected response media types and supplied download filenames
+are checked. OCR recognition is not benchmarked for exact text.
+
+Split and rendered-image ZIPs require the exact ordered safe filenames, no extra, duplicate,
+directory or encrypted entries, and valid CRC. Members are read directly in memory and never
+extracted. Public HTTP reads, including HTTP-error bodies, are bounded at **10 MiB per response**
+using a limit-plus-one read. ZIP members are capped at **2 MiB each**, with **6 MiB total
+uncompressed content** checked before decompression. These are synthetic smoke-verifier safety
+limits, not customer upload or processing limits.
+
+The runner stops at the first failed check and the CLI exits nonzero with a stable check name
+and safe reason, without response bodies or document contents. The manual workflow writes a
+job summary even after failure, including public origins, expected version, attempted check
+count, passed identifiers, overall result and workflow run URL. Missing or incomplete evidence
+cannot report overall PASS.
+
+The release-identity command proves semantic version consistency only. It does not prove that
+the API or frontend serves the exact checked-out Git commit; exact revision attestation requires
+a separate build/deployment identity mechanism. No such mechanism is added here.
+
+Ordinary CI uses synthetic doubles and a local FastAPI TestClient integration test exercising
+all ten MVP1 requests with real converters and no external network. Office and OCR remain
+separately tested without requiring their system binaries for ordinary unit tests.
+
+Repository CI success is separate from a successful manually triggered public run. API smoke
+also does not establish manual acceptance of all ten browser interfaces. Record public evidence
+in [the launch record](mvp1-launch-record.md), then complete browser hard-refresh verification
+and dogfooding before a release decision. These gates remain pending until verified.
+
+The **seventeen public checks** are distinct from the **eighteen production Docker image
+runtime/durable markers**, ending with `PASS batch-download-validation-concurrency`.
 
 The CI **Production runtime image** job also runs synthetic durable storage ownership, batch restart,
 deletion and idle TTL checks inside the production container. It reports `PASS batch-storage-owner-lock`,

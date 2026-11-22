@@ -41,13 +41,64 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
       - name: Verify deployed release identity
+        id: identity
         run: >-
           python -m docuforge.ops.release_identity
           --api-url "$DOCUFORGE_API_URL"
           --timeout 20
       - name: Verify public deployment
+        id: smoke
         run: >-
           python -m docuforge.ops.deployment_smoke
           --frontend-url "$DOCUFORGE_FRONTEND_URL"
           --api-url "$DOCUFORGE_API_URL"
           --timeout 45
+          --report-json production-smoke.json
+      - name: Summarize public verification
+        if: always()
+        env:
+          IDENTITY_OUTCOME: ${{ steps.identity.outcome }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          python - <<'PY'
+          import html
+          import json
+          import os
+          from pathlib import Path
+          from docuforge.ops.deployment_smoke import (
+              SMOKE_CHECKS, DeploymentSmokeError, _normalize_public_url,
+          )
+          from docuforge.version import package_version
+
+          report_path = Path("production-smoke.json")
+          report = json.loads(report_path.read_text()) if report_path.exists() else {}
+          def safe_origin(key):
+              try:
+                  return html.escape(_normalize_public_url(os.environ[key], label="origin"))
+              except (DeploymentSmokeError, ValueError):
+                  return "Invalid origin (omitted)"
+          passed = report.get("passed_checks", [])
+          success = (
+              os.environ["IDENTITY_OUTCOME"] == "success"
+              and os.environ["SMOKE_OUTCOME"] == "success"
+              and report.get("result") == "PASS"
+              and passed == list(SMOKE_CHECKS)
+          )
+          run_url = (
+              f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}'
+              f'/actions/runs/{os.environ["GITHUB_RUN_ID"]}'
+          )
+          lines = [
+              "## Public Production Smoke",
+              f'Overall: {"PASS" if success else "FAIL"}',
+              f'Frontend origin: {safe_origin("DOCUFORGE_FRONTEND_URL")}',
+              f'API origin: {safe_origin("DOCUFORGE_API_URL")}',
+              f"Expected semantic release version: {package_version()}",
+              f'Checks executed: {report.get("checks_executed", 0)} / {len(SMOKE_CHECKS)}',
+              f"Passed checks: {', '.join(passed) or 'None'}",
+              f"Workflow run: {run_url}",
+              "Version consistency does not attest exact deployed Git revisions.",
+          ]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n\n".join(lines) + "\n")
+          PY

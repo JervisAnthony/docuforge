@@ -108,6 +108,12 @@ The included `frontend/vercel.json` uses the Vite build and rewrites browser rou
 
 ## Smoke check
 
+The manual [Production Smoke matrix](production-verification.md) verifies all ten MVP1 API
+workflows plus frontend, readiness, runtime capabilities, health/security headers, CORS, Office
+and OCR: seventeen checks in total. Its workflow summary records reproducible run evidence.
+Semantic version matching does not attest exact deployed Git revisions. Public smoke remains
+manual and is separate from eighteen local production-image markers and browser acceptance.
+
 After both deployments are available:
 
 1. Open the Railway `/api/v1/ready` endpoint and confirm a successful `ready` response.
