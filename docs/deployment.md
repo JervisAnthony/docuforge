@@ -109,14 +109,17 @@ The included `frontend/vercel.json` uses the Vite build and rewrites browser rou
 ## Smoke check
 
 The manual [Production Smoke matrix](production-verification.md) verifies all ten MVP1 API
-workflows plus frontend, readiness, runtime capabilities, health/security headers, CORS, Office
-and OCR: seventeen checks in total. Its workflow summary records reproducible run evidence.
+workflows plus frontend, readiness, runtime capabilities, health/security headers, CORS,
+all three Office routes and all three OCR routes: twenty-one semantic checks in total.
+Its workflow summary records reproducible run evidence.
 First require strict [deployed build identity](deployed-build-identity.md), with separate expected
 API/frontend revisions and matching frontend HTML. Railway's Docker build must receive
 `RAILWAY_GIT_COMMIT_SHA` or explicit `DOCUFORGE_BUILD_REVISION`; Vercel must expose
 `VERCEL_GIT_COMMIT_SHA` at build time or receive the explicit override. Older unstamped
 artifacts must be rebuilt/redeployed before strict checks can pass. Public smoke remains
 manual and is separate from eighteen local production-image markers and browser acceptance.
+The image also runs a separately labeled four-route Office/OCR API integration with real
+engines; ordinary double-based tests and local/container success do not establish public success.
 
 After both deployments are available:
 

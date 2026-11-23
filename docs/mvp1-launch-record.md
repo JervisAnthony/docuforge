@@ -38,11 +38,14 @@ The following remain before the formal `v0.1.0` release:
 
 MVP1 may be formally released when no known launch blocker remains. Launch blockers include crashes, repeated server errors, corrupted outputs, broken downloads, production connectivity failures, deployment instability, or a supported workflow that is unusable in the intended browser experience.
 
-## Seventeen-check public smoke evidence
+## Twenty-one-check public smoke evidence
 
 This new matrix has not yet been executed against the public deployment. Historical acceptance
 above remains unchanged. Use the [complete ordered matrix](production-verification.md) and attach
 the workflow summary when recording a real run.
+
+The current gate requires strict API/frontend build identity verification followed by all
+twenty-one semantic checks.
 
 | Evidence field | Value |
 | --- | --- |
@@ -52,7 +55,7 @@ the workflow summary when recording a real run.
 | API origin used for this run | Pending |
 | Expected version | 0.1.0 |
 | Observed version for this run | Pending |
-| Check count (expected 17) | Pending |
+| Check count (expected 21) | Pending |
 | Result | Pending |
 | Browser hard-refresh verification | Pending |
 | Dogfood completion | Pending |

@@ -4,7 +4,7 @@ After Vercel and Railway are public, run the DocuForge production verifier with 
 
 The repository includes a manually triggered **Production Smoke** GitHub Actions workflow. It
 first verifies independently expected API and frontend build revisions, API readiness and
-release version, and frontend HTML consistency, then runs **seventeen** ordered semantic
+release version, and frontend HTML consistency, then runs **twenty-one** ordered semantic
 checks. Both HTTPS origins and both full expected revisions are required workflow inputs.
 See [build identity setup and exact CLI usage](deployed-build-identity.md).
 The authoritative semantic identifiers live in
@@ -29,11 +29,49 @@ The authoritative semantic identifiers live in
 | 15 | `images-to-pdf` | Two PDF pages, landscape then portrait |
 | 16 | `office-docx-to-pdf` | Parseable nonempty PDF |
 | 17 | `ocr-image-to-text` | Valid UTF-8 plain text |
+| 18 | `office-pptx-to-pdf` | One unencrypted PDF page containing the normalized PPTX marker |
+| 19 | `office-xlsx-to-pdf` | One unencrypted PDF page containing the normalized XLSX marker |
+| 20 | `ocr-pdf-to-text` | Two nonempty UTF-8 page segments, one form-feed boundary, ALPHA then BRAVO |
+| 21 | `ocr-pdf-to-searchable-pdf` | Two unencrypted pages with matching geometry and ordered extractable ALPHA/BRAVO text |
 
 This covers all ten MVP1 API operations plus the frontend, readiness, runtime capabilities,
-health/security headers, browser CORS, Office and OCR. Every conversion uses small generated,
+health/security headers, browser CORS, all three Office-to-PDF routes and all three OCR routes.
+Every conversion uses small generated,
 non-sensitive fixtures in memory. Expected response media types and supplied download filenames
-are checked. OCR recognition is not benchmarked for exact text.
+are checked. OCR recognition is not benchmarked for exact line breaks or broad accuracy.
+
+The four additions are appended after the original seventeen identifiers. They are mandatory:
+an unavailable engine, timeout or failed download causes a named failure and a nonzero exit,
+with passed identifiers and the attempted count retained in JSON evidence. Full success prints
+`Production smoke passed: 21/21 checks`; incomplete or old seventeen-check evidence cannot
+satisfy the current gate. The authoritative full contract remains `SMOKE_CHECKS`.
+
+## Controlled Office and scanned-PDF semantics
+
+`smoke_fixtures.py` creates Office ZIPs in memory with real OOXML content types and
+relationships. The PPTX has a single slide plus its master, layout and theme, with
+`DOCUFORGE PPTX ALPHA`. The XLSX has one worksheet, a single inline-string cell containing
+`DOCUFORGE XLSX BRAVO`, and an explicit single-page A4 print area. Each request supplies
+exactly one `file` field with the correct extension and OOXML MIME type. A PDF signature
+alone is insufficient: output must parse, be unencrypted, have exactly one page and expose
+its expected marker as text. This narrow fixture does not establish general rendering fidelity.
+
+The scanned input consists of two raster images with large black English text on white,
+using Pillow's built-in font, embedded in a PDF at 200 DPI. It has no pre-existing extractable
+text. The pages are 360 by 216 and 432 by 252 PDF points, carrying ALPHA and BRAVO respectively.
+The API uses its existing default English OCR and 300 DPI render settings. No new fonts,
+Office binaries, dependencies or customer processing limits are introduced.
+
+For `ocr-pdf-to-text`, require `text/plain`, valid UTF-8, exactly two nonempty segments
+separated by the converter's form-feed (`\f`) aggregation contract, and markers in page
+order. For searchability, require a parseable unencrypted two-page PDF with geometry within
+one PDF point per axis (the converter's existing rounding tolerance) and a nonempty extractable
+text layer with the right marker on each page. Case and whitespace are ignored in marker
+comparison; other text need not exactly match. Missing/reordered/merged page markers, empty
+text, markup masquerading as OCR text, blank PDFs, lost pages and returning the image-only
+input are rejected. These are controlled searchability/order checks, not broad OCR accuracy
+or preservation of every original PDF feature. Failure diagnostics never include extracted
+text, response bodies, engine stderr or filesystem paths.
 
 Split and rendered-image ZIPs require the exact ordered safe filenames, no extra, duplicate,
 directory or encrypted entries, and valid CRC. Members are read directly in memory and never
@@ -52,20 +90,47 @@ The strict release-identity command compares each component's reported build rev
 its own explicitly expected revision. It also compares frontend manifest and HTML metadata.
 This diagnostic mechanism is not cryptographic attestation or reproducible-build provenance.
 Legacy semantic-only use explicitly reports that revisions were not verified. Strict identity
-is a separate prerequisite and does not change the seventeen-check count or eighteen image
-runtime/durable markers. The always-run summary includes expected/observed component revisions
+is a separate prerequisite to the twenty-one-check matrix and does not change the eighteen
+image runtime/durable markers. The always-run summary includes expected/observed component revisions
 and identity outcome; skipped/failed verification and missing/malformed evidence cannot PASS.
 
-Ordinary CI uses synthetic doubles and a local FastAPI TestClient integration test exercising
-all ten MVP1 requests with real converters and no external network. Office and OCR remain
-separately tested without requiring their system binaries for ordinary unit tests.
+## Distinct verification evidence
+
+1. Ordinary CI uses synthetic doubles and local API integration tests, with no external HTTP
+   or engine binary requirements. The original ten MVP1 operations use explicit named selection;
+   appending checks cannot accidentally add Office/OCR requirements to that test. Office/OCR
+   doubles generate parseable PDFs with real PDF text objects, but do not prove real rendering
+   or recognition.
+2. The production-image CI job runs the four new checks through a real disposable loopback API,
+   LibreOffice and Tesseract using `python -m docuforge.ops.office_ocr_integration`. It binds an
+   ephemeral loopback listener, bypasses HTTP proxies, uses the existing bounded response reader,
+   and owns server/lifespan cleanup even when a conversion check fails. Public HTTPS-origin
+   validation stays unchanged. The helper has no public URL option and the CLI always uses real
+   engines. Its separately labeled result is `Office/OCR API integration PASS: 4 checks`.
+   This is additional integration evidence alongside the unchanged eighteen image markers.
+3. Actual public Production Smoke requires the manual workflow, independent expected API/frontend
+   revisions, and all twenty-one checks against the deployed origins. Normal CI never contacts
+   Railway/Vercel. Local/double/container success does not establish this public outcome.
+4. Manual browser acceptance, hard-refresh and dogfood evidence remain separate launch gates.
+
+For a disposable local production image, from a clean checkout of the intended source:
+
+```powershell
+$testRevision = (git rev-parse HEAD)
+docker build --build-arg "DOCUFORGE_BUILD_REVISION=$testRevision" -t docuforge-runtime-local .
+docker run --rm docuforge-runtime-local python -m docuforge.ops.office_ocr_integration
+```
+
+CI uses its checked-out test revision for the image stamp, which may be a PR merge revision.
+That is not an assumed production or eventual squash-merge revision. If Docker is unavailable,
+real-image execution remains unverified until CI actually passes; doubles are never a substitute.
 
 Repository CI success is separate from a successful manually triggered public run. API smoke
 also does not establish manual acceptance of all ten browser interfaces. Record public evidence
 in [the launch record](mvp1-launch-record.md), then complete browser hard-refresh verification
 and dogfooding before a release decision. These gates remain pending until verified.
 
-The **seventeen public checks** are distinct from the **eighteen production Docker image
+The **twenty-one public checks** are distinct from the **eighteen production Docker image
 runtime/durable markers**, ending with `PASS batch-download-validation-concurrency`.
 
 The CI **Production runtime image** job also runs synthetic durable storage ownership, batch restart,

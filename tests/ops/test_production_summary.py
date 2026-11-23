@@ -29,6 +29,7 @@ from docuforge.ops.production_summary import render_summary
         "untrusted-check",
         "short-count",
         "duplicate-report-fields",
+        "old-17-check-evidence",
     ],
 )
 def test_summary_requires_complete_valid_identity_and_smoke(tmp_path, scenario):
@@ -86,11 +87,17 @@ def test_summary_requires_complete_valid_identity_and_smoke(tmp_path, scenario):
         (tmp_path / "release-identity.json").write_text(
             "{bad" if scenario == "malformed" else json.dumps(evidence)
         )
-    smoke = {"result": "PASS", "passed_checks": list(SMOKE_CHECKS), "checks_executed": 17}
+    smoke = {
+        "result": "PASS",
+        "passed_checks": list(SMOKE_CHECKS),
+        "checks_executed": len(SMOKE_CHECKS),
+    }
     if scenario == "malformed-count":
         smoke["checks_executed"] = True
     if scenario == "short-count":
-        smoke["checks_executed"] = 16
+        smoke["checks_executed"] = len(SMOKE_CHECKS) - 1
+    if scenario == "old-17-check-evidence":
+        smoke.update(passed_checks=list(SMOKE_CHECKS[:17]), checks_executed=17, expected_count=17)
     if scenario == "untrusted-check":
         smoke["passed_checks"] = ["private response"]
     (tmp_path / "production-smoke.json").write_text(
@@ -99,4 +106,4 @@ def test_summary_requires_complete_valid_identity_and_smoke(tmp_path, scenario):
     summary = render_summary(env, directory=tmp_path)
     assert f"Overall: {'PASS' if scenario == 'pass' else 'FAIL'}" in summary
     assert "private" not in summary
-    assert "/ 17" in summary
+    assert f"/ {len(SMOKE_CHECKS)}" in summary
