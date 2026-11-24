@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -20,17 +21,21 @@ from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
 from docuforge.ops.runtime_smoke import make_synthetic_docx, make_synthetic_ocr_png
+from docuforge.ops.smoke_fixtures import (
+    PPTX_MARKER,
+    SCAN_MARKERS,
+    SCAN_PAGE_SIZES,
+    XLSX_MARKER,
+    make_synthetic_pptx,
+    make_synthetic_scanned_pdf,
+    make_synthetic_xlsx,
+)
 
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 MAX_ZIP_MEMBER_BYTES = 2 * 1024 * 1024
 MAX_ZIP_TOTAL_BYTES = 6 * 1024 * 1024
 
-SMOKE_CHECKS = (
-    "frontend",
-    "readiness",
-    "runtime-capabilities",
-    "liveness-and-headers",
-    "cors",
+MVP1_OPERATION_CHECKS = (
     "pdf-merge",
     "pdf-split",
     "pdf-rotate",
@@ -41,8 +46,25 @@ SMOKE_CHECKS = (
     "image-resize",
     "image-compression",
     "images-to-pdf",
+)
+
+OFFICE_OCR_CHECKS = (
+    "office-pptx-to-pdf",
+    "office-xlsx-to-pdf",
+    "ocr-pdf-to-text",
+    "ocr-pdf-to-searchable-pdf",
+)
+
+SMOKE_CHECKS = (
+    "frontend",
+    "readiness",
+    "runtime-capabilities",
+    "liveness-and-headers",
+    "cors",
+    *MVP1_OPERATION_CHECKS,
     "office-docx-to-pdf",
     "ocr-image-to-text",
+    *OFFICE_OCR_CHECKS,
 )
 
 
@@ -239,6 +261,23 @@ def _pdf_order(payload: bytes, expected: tuple[int, ...], rotations=None) -> Non
         raise DeploymentSmokeError("unexpected page order")
     if rotations is not None and [page.rotation for page in pages] != list(rotations):
         raise DeploymentSmokeError("incorrect page rotations")
+
+
+def _normalized_text(text: str) -> str:
+    """Ignore only case and whitespace; never print extracted document text."""
+    return "".join(text.upper().split())
+
+
+def _require_marker(text: str, expected: str) -> None:
+    if _normalized_text(expected) not in _normalized_text(text):
+        raise DeploymentSmokeError("missing expected synthetic text marker")
+
+
+def _page_text(page) -> str:
+    try:
+        return page.extract_text() or ""
+    except Exception as error:
+        raise DeploymentSmokeError("unreadable PDF text layer") from error
 
 
 def _image(payload: bytes, expected_format: str, size: tuple[int, int]) -> None:
@@ -596,6 +635,79 @@ class ProductionSmokeRunner:
         except UnicodeDecodeError as error:
             raise DeploymentSmokeError("OCR workflow did not return valid UTF-8") from error
 
+    def _check_office_pptx_to_pdf(self) -> None:
+        self._office_marker_pdf(
+            "pptx",
+            make_synthetic_pptx(),
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            PPTX_MARKER,
+        )
+
+    def _check_office_xlsx_to_pdf(self) -> None:
+        self._office_marker_pdf(
+            "xlsx",
+            make_synthetic_xlsx(),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            XLSX_MARKER,
+        )
+
+    def _office_marker_pdf(self, extension: str, payload: bytes, media: str, marker: str) -> None:
+        response = self._post(
+            f"/api/v1/office/{extension}-to-pdf",
+            files=(("file", f"runtime-smoke.{extension}", payload, media),),
+        )
+        _download(response, "application/pdf")
+        pages = _pdf_pages(response.body)
+        if len(pages) != 1:
+            raise DeploymentSmokeError("unexpected Office page count")
+        _require_marker(_page_text(pages[0]), marker)
+
+    def _scanned_pdf_operation(self, operation: str, media_type: str) -> bytes:
+        response = self._post(
+            f"/api/v1/ocr/{operation}",
+            files=(("file", "runtime-scan.pdf", make_synthetic_scanned_pdf(), "application/pdf"),),
+        )
+        _download(response, media_type)
+        return response.body
+
+    def _check_ocr_pdf_to_text(self) -> None:
+        payload = self._scanned_pdf_operation("pdf-to-text", "text/plain")
+        try:
+            segments = payload.decode("utf-8").split("\f")
+        except UnicodeDecodeError as error:
+            raise DeploymentSmokeError("OCR workflow did not return valid UTF-8") from error
+        self._scan_text_order(segments)
+
+    def _check_ocr_pdf_to_searchable_pdf(self) -> None:
+        payload = self._scanned_pdf_operation("pdf-to-searchable-pdf", "application/pdf")
+        pages = _pdf_pages(payload)
+        if len(pages) != len(SCAN_PAGE_SIZES):
+            raise DeploymentSmokeError("unexpected searchable PDF page count")
+        for page, expected in zip(pages, SCAN_PAGE_SIZES, strict=True):
+            actual = (float(page.mediabox.width), float(page.mediabox.height))
+            # The converter permits one PDF point of raster/OCR rounding per axis.
+            if any(
+                not math.isfinite(a) or abs(a - b) > 1
+                for a, b in zip(actual, expected, strict=True)
+            ):
+                raise DeploymentSmokeError("incorrect searchable PDF page geometry or order")
+        self._scan_text_order([_page_text(page) for page in pages])
+
+    @staticmethod
+    def _scan_text_order(segments: list[str]) -> None:
+        if len(segments) != len(SCAN_MARKERS) or any(not segment.strip() for segment in segments):
+            raise DeploymentSmokeError("incorrect OCR page boundaries or empty page text")
+        for index, segment in enumerate(segments):
+            if "<" in segment or ">" in segment:
+                raise DeploymentSmokeError("unexpected markup in synthetic OCR text")
+            _require_marker(segment, SCAN_MARKERS[index])
+            if any(
+                _normalized_text(marker) in _normalized_text(segment)
+                for other, marker in enumerate(SCAN_MARKERS)
+                if other != index
+            ):
+                raise DeploymentSmokeError("incorrect OCR page marker order")
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the production smoke command-line parser."""
@@ -619,6 +731,7 @@ def main(argv: list[str] | None = None) -> int:
     runner = None
     failure = None
     success = False
+    checks_completed = False
     try:
         runner = ProductionSmokeRunner(
             frontend_url=arguments.frontend_url,
@@ -626,7 +739,10 @@ def main(argv: list[str] | None = None) -> int:
             timeout=arguments.timeout,
         )
         checks = runner.run()
+        checks_completed = True
         success = checks == SMOKE_CHECKS
+        if not success:
+            raise DeploymentSmokeError("incomplete semantic check evidence")
     except DeploymentSmokeError as error:
         failure = str(error)
         print(f"FAIL {error}", file=sys.stderr)
@@ -639,7 +755,8 @@ def main(argv: list[str] | None = None) -> int:
                     {
                         "result": "PASS" if success else "FAIL",
                         "passed_checks": passed,
-                        "checks_executed": len(passed) + (1 if failure and runner else 0),
+                        "checks_executed": len(passed)
+                        + (1 if failure and runner and not checks_completed else 0),
                         "expected_count": len(SMOKE_CHECKS),
                     }
                 ),
@@ -648,7 +765,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for check in checks:
         print(f"PASS {check}")
-    print(f"Production smoke passed: {len(checks)} checks")
+    print(f"Production smoke passed: {len(checks)}/{len(SMOKE_CHECKS)} checks")
     return 0
 
 

@@ -123,7 +123,7 @@ independently and verify those exact values; mixed API/frontend revisions can be
 legitimate. An old unstamped image must be rebuilt with its actual source revision.
 
 The manual **Production Smoke** workflow requires both expected revision inputs
-and both origins. Identity is a separate prerequisite to the existing seventeen
+and both origins. Identity is a separate prerequisite to the twenty-one
 semantic checks. Its always-run summary includes expected/observed revisions and
 rejects failed/skipped verification or missing/malformed reports. It never assumes
 the verifier checkout's SHA is a production revision.
@@ -135,7 +135,9 @@ the appropriate source expectation only when that commit was actually deployed.
 API/frontend deployments and rollbacks may differ from each other and from the
 verifier checkout. The production Docker CI job supplies its test checkout SHA
 explicitly and verifies the installed stamp inside the non-root image before
-retaining all eighteen runtime/durable markers. Identity adds no durable marker.
+retaining all eighteen runtime/durable markers. A separate four-route Office/OCR API
+integration exercises real engines in that image. Neither integration nor identity
+adds or renumbers a durable marker.
 
 This verifies reported build metadata and HTML consistency. It does not inspect
 every loaded JavaScript chunk, sign artifacts, prove reproducible source-to-binary

@@ -10,11 +10,15 @@ from pypdf import PdfWriter
 
 from docuforge.ops import deployment_smoke as smoke
 from docuforge.ops.deployment_smoke import (
+    MVP1_OPERATION_CHECKS,
+    OFFICE_OCR_CHECKS,
     SMOKE_CHECKS,
     DeploymentSmokeError,
     HttpResponse,
     ProductionSmokeRunner,
 )
+from docuforge.ops.smoke_fixtures import PPTX_MARKER, SCAN_MARKERS, SCAN_PAGE_SIZES, XLSX_MARKER
+from tests.ops.office_ocr_support import text_pdf
 
 
 def _pdf(*widths: int) -> bytes:
@@ -155,6 +159,18 @@ class FakeRequester:
             "/images/convert": ("image/jpeg", _jpeg),
             "/images/resize": ("image/png", lambda: _image_bytes(size=(48, 32))),
             "/images/to-pdf": ("application/pdf", _images_pdf),
+            "/office/pptx-to-pdf": ("application/pdf", lambda: text_pdf((720, 540, PPTX_MARKER))),
+            "/office/xlsx-to-pdf": ("application/pdf", lambda: text_pdf((595, 842, XLSX_MARKER))),
+            "/ocr/pdf-to-text": ("text/plain", lambda: b"ALPHA\n\fBRAVO\n"),
+            "/ocr/pdf-to-searchable-pdf": (
+                "application/pdf",
+                lambda: text_pdf(
+                    *(
+                        (*size, marker)
+                        for size, marker in zip(SCAN_PAGE_SIZES, SCAN_MARKERS, strict=True)
+                    )
+                ),
+            ),
         }
         for path, (media_type, make_output) in outputs.items():
             if method == "POST" and url.endswith("/api/v1" + path):
@@ -187,8 +203,8 @@ def test_runner_verifies_full_public_contract() -> None:
     checks = _runner(requester).run()
 
     assert checks == SMOKE_CHECKS
-    assert len(checks) == 17
-    assert [call[0] for call in requester.calls] == ["GET"] * 4 + ["OPTIONS"] + ["POST"] * 12
+    assert len(checks) == len(set(checks)) == 21
+    assert [call[0] for call in requester.calls] == ["GET"] * 4 + ["OPTIONS"] + ["POST"] * 16
     assert [
         call[1].removeprefix("https://api.example.com/api/v1/") for call in requester.calls[5:]
     ] == [
@@ -204,6 +220,10 @@ def test_runner_verifies_full_public_contract() -> None:
         "images/to-pdf",
         "office/docx-to-pdf",
         "ocr/image-to-text",
+        "office/pptx-to-pdf",
+        "office/xlsx-to-pdf",
+        "ocr/pdf-to-text",
+        "ocr/pdf-to-searchable-pdf",
     ]
     assert all(call[4] == 7.5 for call in requester.calls)
     assert requester.calls[5][2]["Content-Type"].startswith("multipart/form-data; boundary=")
@@ -323,10 +343,10 @@ def test_runner_fails_safely_for_malformed_capability_response() -> None:
 
 
 def test_runner_accepts_office_pdf_and_ocr_utf8_workflows() -> None:
-    assert _runner(FakeRequester()).run()[-2:] == (
-        "office-docx-to-pdf",
-        "ocr-image-to-text",
-    )
+    checks = _runner(FakeRequester()).run()
+    assert checks.index("office-docx-to-pdf") == 15
+    assert checks.index("ocr-image-to-text") == 16
+    assert checks[17:] == OFFICE_OCR_CHECKS
 
 
 def test_runner_rejects_invalid_office_pdf_response() -> None:
@@ -558,15 +578,20 @@ def test_cli_exit_and_machine_report(monkeypatch, capsys, tmp_path, fail):
     evidence = json.loads(report.read_text())
     assert result == (1 if fail else 0)
     assert evidence["result"] == ("FAIL" if fail else "PASS")
-    assert evidence["checks_executed"] == (7 if fail else 17)
+    assert evidence["checks_executed"] == (7 if fail else len(SMOKE_CHECKS))
+    assert evidence["expected_count"] == len(SMOKE_CHECKS)
     assert evidence["passed_checks"] == list(SMOKE_CHECKS[:6] if fail else SMOKE_CHECKS)
     if fail:
         assert "FAIL pdf-split: download returned HTTP 500" in output.err
         assert "Production smoke passed" not in output.out
         assert "private document" not in output.err
+    else:
+        assert "Production smoke passed: 21/21 checks" in output.out
 
 
-@pytest.mark.parametrize("name", SMOKE_CHECKS[5:])
+@pytest.mark.parametrize(
+    "name", (*MVP1_OPERATION_CHECKS, "office-docx-to-pdf", "ocr-image-to-text", *OFFICE_OCR_CHECKS)
+)
 def test_every_download_requires_expected_media_type(name):
     requester = FakeRequester()
 
@@ -669,7 +694,7 @@ def test_workflow_summary_is_fail_closed(monkeypatch, tmp_path, scenario):
                 {
                     "result": "FAIL" if partial else "PASS",
                     "passed_checks": list(SMOKE_CHECKS[:6] if partial else SMOKE_CHECKS),
-                    "checks_executed": 7 if partial else 17,
+                    "checks_executed": 7 if partial else len(SMOKE_CHECKS),
                 }
             )
         )
@@ -680,5 +705,5 @@ def test_workflow_summary_is_fail_closed(monkeypatch, tmp_path, scenario):
     assert "https://github.com/JervisAnthony/docuforge/actions/runs/123" in content
     assert "private-token" not in content
     if scenario == "partial":
-        assert "Checks executed: 7 / 17" in content
+        assert f"Checks executed: 7 / {len(SMOKE_CHECKS)}" in content
         assert "pdf-split" not in content

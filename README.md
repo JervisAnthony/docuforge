@@ -216,13 +216,17 @@ See [`docs/deployment.md`](docs/deployment.md) for environment configuration and
 
 The manual **Production Smoke** workflow verifies the deployed release identity before exercising
 the public frontend, system contracts, runtime capabilities, all ten MVP1 PDF/image workflows,
-Office DOCX-to-PDF, and OCR image-to-text: [seventeen semantic checks](docs/production-verification.md).
+all three Office-to-PDF routes, and image/scanned-PDF OCR:
+[twenty-one semantic checks](docs/production-verification.md).
 Strict identity verification requires separate expected API and frontend Git revisions,
-and checks frontend HTML consistency before the seventeen semantic checks. See
+and checks frontend HTML consistency before the twenty-one semantic checks. See
 [build inputs, provider settings and strict CLI usage](docs/deployed-build-identity.md).
 This is reported diagnostic metadata, not cryptographic provenance.
 Public smoke, manual browser acceptance, hard-refresh and dogfood evidence remain separate
 release gates; this coverage does not declare MVP1 launched.
+Ordinary tests use synthetic engine doubles; a separate disposable production-image API
+integration exercises the four additional Office/scanned-PDF checks with real engines.
+Those results remain distinct from the eighteen existing image runtime/durable markers.
 
 ## Release quality
 
