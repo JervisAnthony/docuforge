@@ -73,7 +73,6 @@ def test_wheel_sdist_installed_stamp_and_rebuild_without_git(tmp_path):
                 "-m",
                 "pip",
                 "install",
-                "--no-deps",
                 "--no-compile",
                 "--target",
                 str(installed),
