@@ -57,6 +57,8 @@ def test_wheel_sdist_installed_stamp_and_rebuild_without_git(tmp_path):
         )
         wheel = next(output.glob("*.whl"))
         with ZipFile(wheel) as archive:
+            for module in ("batch_smoke", "batch_transport", "batch_summary", "batch_integration"):
+                assert f"docuforge/ops/{module}.py" in archive.namelist()
             resources = [path for path in archive.namelist() if path.endswith(".json")]
             assert resources == ["docuforge/_build_identity.json"]
             assert json.loads(archive.read(resources[0])) == {
@@ -99,6 +101,31 @@ def test_wheel_sdist_installed_stamp_and_rebuild_without_git(tmp_path):
             )
         )
         _run(["-I", "-c", script, str(installed)], cwd=tmp_path, env=runtime_env)
+        # The installed public command must work without optional web modules.
+        # Block imports even when this test runner has [web] installed.
+        public_script = """
+import importlib.abc
+import sys
+sys.path.insert(0, sys.argv[1])
+class NoWeb(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'fastapi', 'pydantic', 'uvicorn', 'httpx'} or fullname.startswith('docuforge.api'):
+            raise ImportError('optional web dependency forbidden')
+sys.meta_path.insert(0, NoWeb())
+from docuforge.ops.batch_smoke import main, run_public
+from docuforge.ops.batch_summary import valid_report
+report = run_public(api_url='http://invalid', frontend_url='https://example.com',
+                    expected_api_revision='a' * 40, expected_frontend_revision='b' * 40,
+                    expected_version='0.1.0')
+assert valid_report(report) and report['code'] == 'configuration_invalid'
+try:
+    main(['--help'])
+except SystemExit as error:
+    assert error.code == 0
+else:
+    raise AssertionError('help did not exit')
+"""
+        _run(["-I", "-c", public_script, str(installed)], cwd=tmp_path, env=runtime_env)
     assert not (source / "src/docuforge/_build_identity.json").exists()
     output = tmp_path / "source-dist"
     _run(
@@ -111,6 +138,7 @@ def test_wheel_sdist_installed_stamp_and_rebuild_without_git(tmp_path):
         names = archive.getnames()
         assert any(path.endswith("/setup.py") for path in names)
         assert any(path.endswith("/src/docuforge/build_identity.py") for path in names)
+        assert any(path.endswith("/src/docuforge/ops/batch_smoke.py") for path in names)
         assert not any(path.endswith("/_build_identity.json") for path in names)
         # Only the freshly built source archive is extracted into this empty temporary tree.
         archive.extractall(tmp_path / "roundtrip", filter="data")

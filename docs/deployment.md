@@ -108,6 +108,16 @@ The included `frontend/vercel.json` uses the Vite build and rewrites browser rou
 
 ## Smoke check
 
+For separate batch-readiness evidence, use the manual **Production Batch Smoke**
+workflow or `python -m docuforge.ops.batch_smoke` with explicit HTTPS origins and
+independent expected API/frontend revisions. This command verifies strict identity,
+then creates/deletes four synthetic sessions with private access, ordered ZIP and
+cleanup checks. [Public batch verification](public-batch-verification.md) documents
+bounded timing, safe reports, uncertainty and existing terminal-TTL fallback. It
+does not restart the deployed service or change storage/retention settings. Its
+four outcomes remain separate from the existing Production Smoke suite and from
+the disposable real-engine `docuforge.ops.batch_integration` result in image CI.
+
 The manual [Production Smoke matrix](production-verification.md) verifies all ten MVP1 API
 workflows plus frontend, readiness, runtime capabilities, health/security headers, CORS,
 all three Office routes and all three OCR routes: twenty-one semantic checks in total.

@@ -1,0 +1,85 @@
+name: Production Batch Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: Explicit public HTTPS API origin (creates and deletes synthetic sessions)
+        required: true
+        type: string
+      frontend_url:
+        description: Explicit public HTTPS frontend origin
+        required: true
+        type: string
+      expected_api_revision:
+        description: Independently expected full API Git SHA
+        required: true
+        type: string
+      expected_frontend_revision:
+        description: Independently expected full frontend Git SHA
+        required: true
+        type: string
+      expected_version:
+        description: Expected deployment version
+        required: true
+        default: "0.1.0"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-batch-smoke
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify four public batch lifecycles and cleanup
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOCUFORGE_API_URL: ${{ inputs.api_url }}
+      DOCUFORGE_FRONTEND_URL: ${{ inputs.frontend_url }}
+      DOCUFORGE_EXPECTED_API_REVISION: ${{ inputs.expected_api_revision }}
+      DOCUFORGE_EXPECTED_FRONTEND_REVISION: ${{ inputs.expected_frontend_revision }}
+      DOCUFORGE_EXPECTED_VERSION: ${{ inputs.expected_version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install ordinary package
+        run: python -m pip install .
+      - name: Verify identity and synthetic batch lifecycles
+        id: batch
+        run: >-
+          python -m docuforge.ops.batch_smoke
+          --api-url "$DOCUFORGE_API_URL"
+          --frontend-url "$DOCUFORGE_FRONTEND_URL"
+          --expected-api-revision "$DOCUFORGE_EXPECTED_API_REVISION"
+          --expected-frontend-revision "$DOCUFORGE_EXPECTED_FRONTEND_REVISION"
+          --expected-version "$DOCUFORGE_EXPECTED_VERSION"
+          --suite-seconds 600 --case-seconds 120 --cleanup-seconds 60
+          --timeout 20 --report-json batch-smoke.json
+      - name: Summarize validated batch evidence
+        if: always()
+        env:
+          BATCH_OUTCOME: ${{ steps.batch.outcome }}
+        run: |
+          python - <<'PY'
+          import os
+          try:
+              from docuforge.ops.batch_summary import main
+              main()
+          except Exception:
+              # Installation/summary failures cannot hide behind missing evidence.
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
+                  stream.write("## Public Batch Lifecycle Verification\n\nOverall: FAIL\n\nStrict identity: incomplete\n\n")
+                  for name in ("batch-image-convert", "batch-image-resize", "batch-image-compress", "batch-office-to-pdf"):
+                      stream.write(f"{name}: evidence unavailable; cleanup unconfirmed\n\n")
+              raise SystemExit(1)
+          PY
