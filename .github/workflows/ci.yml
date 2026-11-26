@@ -211,6 +211,8 @@ jobs:
         run: docker run --rm docuforge-runtime-ci python -m docuforge.ops.runtime_smoke
       - name: Verify four Office and OCR API operations with real engines
         run: docker run --rm docuforge-runtime-ci python -m docuforge.ops.office_ocr_integration
+      - name: Verify four batch API lifecycles and cleanup with real mixed Office engines
+        run: docker run --rm docuforge-runtime-ci python -m docuforge.ops.batch_integration
       - name: Verify durable batch restart
         run: docker run --rm docuforge-runtime-ci python -m docuforge.ops.batch_persistence_smoke
       - name: Verify non-root execution

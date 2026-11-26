@@ -1,5 +1,16 @@
 # Production verification
 
+Public batch lifecycle verification is a separately invoked, mutating suite of four
+cases. The **Production Batch Smoke** manual workflow and
+`python -m docuforge.ops.batch_smoke` verify strict identity internally, create small
+synthetic sessions, validate private access and ZIP semantics, and require confirmed
+cleanup. See [usage, ownership, deadlines, privacy and TTL fallback](public-batch-verification.md).
+Its four lifecycle outcomes stay separate from this document's twenty-one semantic
+checks, eighteen runtime/durable markers, and four Office/OCR API integration checks.
+The disposable production image additionally runs `python -m docuforge.ops.batch_integration`
+with real mixed Office conversion; ordinary local tests use parseable Office doubles.
+Neither form proves a public run passed or changes historical/Pending launch records.
+
 After Vercel and Railway are public, run the DocuForge production verifier with the two HTTPS origins.
 
 The repository includes a manually triggered **Production Smoke** GitHub Actions workflow. It

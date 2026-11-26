@@ -228,6 +228,14 @@ Ordinary tests use synthetic engine doubles; a separate disposable production-im
 integration exercises the four additional Office/scanned-PDF checks with real engines.
 Those results remain distinct from the eighteen existing image runtime/durable markers.
 
+The separate manual **Production Batch Smoke** workflow creates and deletes synthetic
+sessions for image convert/resize/compress and mixed Office-to-PDF. Its command
+`python -m docuforge.ops.batch_smoke` requires strict identity before creation and
+confirmed cleanup for all four lifecycles. See [public batch verification](docs/public-batch-verification.md)
+for mutations, bounded timing, private evidence and uncertain-creation/TTL fallback.
+These four cases are separate batch-readiness evidence; local doubles and disposable
+real-image integration do not establish public success or change historical launch gates.
+
 ## Release quality
 
 The repository CI covers:
